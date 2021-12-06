@@ -1,0 +1,23 @@
+
+sds_root_path: /home/misha/data/sds
+target_dataset_name: itodd
+distractor_dataset_name: tless
+src_path: /home/misha/prog/sixd_sense
+cc_textures_path: /media/misha/HomeWork/data/bproc/cc_textures
+output_path: null
+output_postfix: 'debug'
+images_per_dir: 1000
+
+
+generation:
+  room_size: 1.5
+  scenes_num: 2
+  depth_antialiasing: false
+  render_samples: 10
+  image_size: [512, 512]
+  scene:
+    images_num: 5
+    target_objects_num: 30
+    distractor_objects_num: 10
+
+

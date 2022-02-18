@@ -1,10 +1,12 @@
 import blenderproc as bproc
+from blenderproc.python.material import MaterialLoaderUtility
 
-from typing import Any, Dict, Tuple, List, Optional, Union
 import argparse
+import itertools
 import os
 from pathlib import Path
 import sys
+from typing import Any, Dict, Tuple, List, Optional, Union
 import time
 
 import h5py
@@ -15,124 +17,107 @@ import bpy
 from mathutils import Matrix
 
 from blenderproc.python.camera import CameraUtility
+from blenderproc.python.renderer.SegMapRendererUtility import _colorize_objects_for_instance_segmentation
 from blenderproc.python.types.MeshObjectUtility import MeshObject
+from blenderproc.python.utility.BlenderUtility import get_all_blender_mesh_objects, load_image
 from blenderproc.python.utility.Utility import Utility
 from blenderproc.python.writer.WriterUtility import WriterUtility
+from blenderproc.python.renderer import RendererUtility
 
 bproc.init()
 
 
-class SceneConfig(YamlModel):
-    images_num: int
-    target_objects_num: int
-    distractor_objects_num: int
+def render_segmap(obj_key: str,
+                  output_dir: Optional[str] = None, temp_dir: Optional[str] = None, file_prefix: str = "segmap_",
+                  output_key: str = "segmap", segcolormap_output_file_prefix: str = "instance_attribute_map_",
+                  segcolormap_output_key: str = "segcolormap", use_alpha_channel: bool = False,
+                  render_colorspace_size_per_dimension: int = 2048) -> \
+        Dict[str, Union[np.ndarray, List[np.ndarray]]]:
+    """ Renders segmentation maps for all frames
 
+    :param output_dir: The directory to write images to.
+    :param temp_dir: The directory to write intermediate data to.
+    :param file_prefix: The prefix to use for writing the images.
+    :param output_key: The key to use for registering the output.
+    :param segcolormap_output_file_prefix: The prefix to use for writing the segmentation-color map csv.
+    :param segcolormap_output_key: The key to use for registering the segmentation-color map output.
+    :param use_alpha_channel: If true, the alpha channel stored in .png textures is used.
+    :param render_colorspace_size_per_dimension: As we use float16 for storing the rendering, the interval of \
+                                                 integers which can be precisely stored is [-2048, 2048]. As \
+                                                 blender does not allow negative values for colors, we use \
+                                                 [0, 2048] ** 3 as our color space which allows ~8 billion \
+                                                 different colors/objects. This should be enough.
+    :return: dict of lists of segmaps and (for instance segmentation) segcolormaps
+    """
 
-class GenConfig(YamlModel):
-    room_size: int
-    scenes_num: int
-    depth_antialiasing: bool
-    render_samples: int
-    image_size: Tuple[int, int]
-    scene: SceneConfig
+    if output_dir is None:
+        output_dir = Utility.get_temporary_directory()
+    if temp_dir is None:
+        temp_dir = Utility.get_temporary_directory()
 
+    with Utility.UndoAfterExecution():
+        RendererUtility._render_init()
+        # the amount of samples must be one and there can not be any noise threshold
+        RendererUtility.set_max_amount_of_samples(1)
+        RendererUtility.set_noise_threshold(0)
+        RendererUtility.set_denoiser(None)
+        RendererUtility.set_light_bounces(1, 0, 0, 1, 0, 8, 0)
 
-class Config(YamlModel):
-    sds_root_path: Path
-    target_dataset_name: str
-    distractor_dataset_name: str
-    src_path: Path
-    cc_textures_path: Path
-    output_path: Optional[Path]
-    output_postfix: Optional[str]
-    images_per_dir: int
-    generation: GenConfig
+        # Get objects with meshes (i.e. not lights or cameras)
+        objs_with_mats = get_all_blender_mesh_objects()
 
-    @staticmethod
-    def load(config_path: Path) -> 'Config':
-        print(f'Reading config from {config_path}')
-        with open(config_path, 'r') as f:
-            cfg = Config.parse_raw(f.read())
-            if cfg.output_path is None:
-                output_postfix = cfg.output_postfix or ''
-                if output_postfix and not output_postfix.startswith('_'):
-                    output_postfix = f'_{output_postfix}'
-                cfg.output_path = cfg.sds_root_path / cfg.target_dataset_name / f'data{output_postfix}'
-        return cfg
+        colors, num_splits_per_dimension, objects = _colorize_objects_for_instance_segmentation(
+            objs_with_mats, use_alpha_channel, render_colorspace_size_per_dimension)
 
+        bpy.context.scene.cycles.filter_width = 0.0
 
-class GlobObj:
-    def __init__(self, mesh: MeshObject, ds_name: str, obj_id: str):
-        self.mesh = mesh
-        self.ds_name = ds_name
-        self.obj_id = obj_id
-        self.glob_id = f'{self.ds_name}_{self.obj_id}'
-        self.mesh.set_cp('category_id', self.glob_id)
+        if use_alpha_channel:
+            MaterialLoaderUtility.add_alpha_channel_to_textures(blurry_edges=False)
 
-        self.mesh.set_shading_mode('auto')
-        self.mesh.enable_rigidbody(True, mass=1.0, friction=100.0, linear_damping=0.99,
-                                   angular_damping=0.99, collision_margin=0.0005)
-        self.hide()
+        # Determine path for temporary and for final output
+        temporary_segmentation_file_path = os.path.join(temp_dir, "seg_")
+        final_segmentation_file_path = os.path.join(output_dir, file_prefix)
 
-    def show(self):
-        self.mesh.hide(False)
+        RendererUtility.set_output_format("OPEN_EXR", 16)
+        RendererUtility.render(temp_dir, "seg_", None, return_data=False)
 
-    def hide(self):
-        self.mesh.hide(True)
+        # Find optimal dtype of output based on max index
+        for dtype in [np.uint8, np.uint16, np.uint32]:
+            optimal_dtype = dtype
+            if np.iinfo(optimal_dtype).max >= len(colors) - 1:
+                break
 
-    def activate_physics(self):
-        self.mesh.blender_obj.rigid_body.type = 'ACTIVE'
+        return_dict: Dict[str, Union[List[np.ndarray], List[Dict]]] = {}
 
-    def deactivate_physics(self):
-        self.mesh.blender_obj.rigid_body.type = 'PASSIVE'
+        # After rendering
+        for frame in range(bpy.context.scene.frame_start, bpy.context.scene.frame_end):  # for each rendered frame
+            file_path = temporary_segmentation_file_path + ("%04d" % frame) + ".exr"
+            segmentation = load_image(file_path)
+            print(file_path, segmentation.shape)
 
+            segmap = Utility.map_back_from_equally_spaced_equidistant_values(
+                segmentation, num_splits_per_dimension, render_colorspace_size_per_dimension)
+            segmap = segmap.astype(optimal_dtype)
 
-GlobObjs = Dict[str, GlobObj]
+            key_to_num = {}
+            segmap_vals = set(np.unique(segmap))
+            for ind, obj in enumerate(objs_with_mats):
+                obj_num = ind + 1
+                if obj_num not in segmap_vals:
+                    continue
+                if obj_key in obj:
+                    key_to_num[obj[obj_key]] = obj_num
+                else:
+                    segmap[segmap == obj_num] = 0
+            return_dict.setdefault(f'segmap_key_to_num', []).append(key_to_num)
 
+            return_dict.setdefault(f'segmap', []).append(segmap)
+            fname = final_segmentation_file_path + ("%04d" % frame)
+            np.save(fname, segmap)
 
-def load_objs(ds_root_path: Path, ds_name: str) -> GlobObjs:
-    models_path = ds_root_path / ds_name / 'models'
-    models = read_yaml(models_path / 'models.yaml')
-    glob_objs = {}
-    for obj_id in models:
-        obj_path = models_path / f'{obj_id}.ply'
-        objs = bproc.loader.load_obj(obj_path.as_posix())
-        assert len(objs) == 1
-        obj = objs[0]
-        glob_objs[obj_id] = GlobObj(obj, ds_name, obj_id)
-    return glob_objs
+        Utility.register_output(output_dir, file_prefix, output_key, ".npy", "2.0.0")
 
-
-def make_room(sz: int):
-    sz_half = sz / 2
-    room_planes = [bproc.object.create_primitive('PLANE', size=sz),
-                   bproc.object.create_primitive('PLANE', size=sz, location=[0, -sz_half, sz_half],
-                                                 rotation=[-1.570796, 0, 0]),
-                   bproc.object.create_primitive('PLANE', size=sz, location=[0, sz_half, sz_half],
-                                                 rotation=[1.570796, 0, 0]),
-                   bproc.object.create_primitive('PLANE', size=sz, location=[sz_half, 0, sz_half],
-                                                 rotation=[0, -1.570796, 0]),
-                   bproc.object.create_primitive('PLANE', size=sz, location=[-sz_half, 0, sz_half],
-                                                 rotation=[0, 1.570796, 0])]
-    for plane in room_planes:
-        plane.enable_rigidbody(False, collision_shape='BOX', mass=1.0, friction=100.0, linear_damping=0.99,
-                               angular_damping=0.99)
-
-    # sample light color and strenght from ceiling
-    light_plane = bproc.object.create_primitive('PLANE', size=sz * 1.5, location=[0, 0, sz * 2])
-    light_plane.set_name('light_plane')
-
-    return room_planes, light_plane
-
-
-def make_light():
-    light_plane_material = bproc.material.create('light_material')
-
-    # sample point light on shell
-    light_point = bproc.types.Light()
-    light_point.set_energy(20)
-
-    return light_plane_material, light_point
+    return return_dict
 
 
 def write_hdf5(output_dir_path: str, output_data_dict: Dict[str, List[Union[np.ndarray, list, dict]]],
@@ -205,6 +190,148 @@ def write_hdf5(output_dir_path: str, output_data_dict: Dict[str, List[Union[np.n
                 WriterUtility._write_to_hdf_file(file, "blender_proc_version", np.string_(blender_proc_version))
 
 
+class SceneConfig(YamlModel):
+    images_num: int
+    target_objects_num: int
+    distractor_objects_num: int
+    max_duplicate_objects: int
+
+
+class GenConfig(YamlModel):
+    room_size: int
+    scenes_num: int
+    depth_antialiasing: bool
+    render_samples: int
+    image_size: Tuple[int, int]
+    scene: SceneConfig
+
+
+class Config(YamlModel):
+    sds_root_path: Path
+    target_dataset_name: str
+    distractor_dataset_name: str
+    src_path: Path
+    cc_textures_path: Path
+    output_path: Optional[Path]
+    output_postfix: Optional[str]
+    images_per_dir: int
+    generation: GenConfig
+
+    @staticmethod
+    def load(config_path: Path) -> 'Config':
+        print(f'Reading config from {config_path}')
+        with open(config_path, 'r') as f:
+            cfg = Config.parse_raw(f.read())
+            if cfg.output_path is None:
+                output_postfix = cfg.output_postfix or ''
+                if output_postfix and not output_postfix.startswith('_'):
+                    output_postfix = f'_{output_postfix}'
+                cfg.output_path = cfg.sds_root_path / cfg.target_dataset_name / f'data{output_postfix}'
+        return cfg
+
+
+class GlobObj:
+    meshes: List[MeshObject]
+    active_meshes: List[MeshObject]
+
+    def __init__(self, mesh: MeshObject, ds_name: str, obj_id: str):
+        self.meshes = [mesh]
+        self.active_meshes = []
+        self.ds_name = ds_name
+        self.obj_id = obj_id
+        self.glob_id = f'{self.ds_name}_{self.obj_id}'
+
+        self.mesh_instances_num = 0
+        self.prepare_mesh(mesh)
+
+        self.active_meshes = []
+
+    def prepare_mesh(self, mesh: MeshObject):
+        self.mesh_instances_num += 1
+        full_id = f'{self.glob_id}_{self.mesh_instances_num:02d}'
+        mesh.set_cp('full_id', full_id)
+        mesh.set_shading_mode('auto')
+        mesh.enable_rigidbody(True, mass=1.0, friction=100.0, linear_damping=0.99,
+                              angular_damping=0.99, collision_margin=0.0005)
+
+    def meshes_sampling_start(self):
+        if self.active_meshes:
+            self.meshes.extend(self.active_meshes)
+            self.active_meshes.clear()
+
+    def meshes_sampling_add(self):
+        if self.meshes:
+            self.active_meshes.append(self.meshes.pop())
+        else:
+            mesh = self.active_meshes[-1]
+            bobj = mesh.blender_obj
+            new_bobj = bobj.copy()
+            new_bobj.data = bobj.data.copy()
+            new_bobj.animation_data_clear()
+            bpy.context.collection.objects.link(new_bobj)
+            new_mesh = MeshObject(new_bobj)
+            self.prepare_mesh(new_mesh)
+            self.active_meshes.append(new_mesh)
+
+    def meshes_sampling_stop(self):
+        for mesh in self.active_meshes:
+            mesh.hide(False)
+            mesh.blender_obj.rigid_body.type = 'ACTIVE'
+
+        for mesh in self.meshes:
+            mesh.set_location((100, 100, 100))
+            mesh.hide(True)
+            mesh.blender_obj.rigid_body.type = 'PASSIVE'
+
+
+GlobObjs = Dict[str, GlobObj]
+
+
+def load_objs(ds_root_path: Path, ds_name: str) -> GlobObjs:
+    models_path = ds_root_path / ds_name / 'models'
+    models = read_yaml(models_path / 'models.yaml')
+    glob_objs = {}
+    for obj_id in models:
+        obj_path = models_path / f'{obj_id}.ply'
+        objs = bproc.loader.load_obj(obj_path.as_posix())
+        assert len(objs) == 1
+        obj = objs[0]
+        glob_objs[obj_id] = GlobObj(obj, ds_name, obj_id)
+    return glob_objs
+
+
+def make_room(sz: int):
+    sz_half = sz / 2
+    room_planes = [bproc.object.create_primitive('PLANE', size=sz),
+                   bproc.object.create_primitive('PLANE', size=sz, location=[0, -sz_half, sz_half],
+                                                 rotation=[-1.570796, 0, 0]),
+                   bproc.object.create_primitive('PLANE', size=sz, location=[0, sz_half, sz_half],
+                                                 rotation=[1.570796, 0, 0]),
+                   bproc.object.create_primitive('PLANE', size=sz, location=[sz_half, 0, sz_half],
+                                                 rotation=[0, -1.570796, 0]),
+                   bproc.object.create_primitive('PLANE', size=sz, location=[-sz_half, 0, sz_half],
+                                                 rotation=[0, 1.570796, 0])]
+    for plane in room_planes:
+        plane.enable_rigidbody(False, collision_shape='BOX', mass=1.0, friction=100.0, linear_damping=0.99,
+                               angular_damping=0.99)
+
+    # sample light color and strenght from ceiling
+    light_plane = bproc.object.create_primitive('PLANE', size=sz * 1.5, location=[0, 0, sz * 2])
+    light_plane.set_name('light_plane')
+
+    return room_planes, light_plane
+
+
+def make_light():
+    light_plane_material = bproc.material.create('light_material')
+
+    # sample point light on shell
+    light_point = bproc.types.Light()
+    light_point.set_energy(20)
+
+    return light_plane_material, light_point
+
+
 class DirsIter:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -243,6 +370,34 @@ class DirsIter:
         return new_dir_path
 
 
+def sample_add_objs(objs: List[GlobObj], max_objects: int, max_duplicates: int) -> Tuple[List[GlobObj], List[MeshObject]]:
+    n_objs = len(objs)
+    objs = objs.copy()
+    sampled_objs = {}
+    for obj in objs:
+        obj.meshes_sampling_start()
+
+    for i_sample in range(max_objects):
+        if len(objs) == 0:
+            print(f'Cannot sample {max_objects} objects with possible {max_duplicates} duplicates '
+                  f'from {n_objs}. Sampled objects: {len(sampled_objs)}')
+            break
+        i_obj = np.random.randint(0, len(objs))
+        obj = objs[i_obj]
+        obj.meshes_sampling_add()
+        sampled_objs[obj.glob_id] = obj
+        if len(obj.active_meshes) >= max_duplicates:
+            obj.meshes_sampling_stop()
+            objs.pop(i_obj)
+
+    for obj in objs:
+        obj.meshes_sampling_stop()
+
+    sampled_objs = list(sampled_objs.values())
+    sampled_meshes = list(itertools.chain(*[obj.active_meshes for obj in sampled_objs]))
+    return sampled_objs, sampled_meshes
+
+
 class SceneGen:
     def __init__(self, cfg: SceneConfig, target_objs: GlobObjs, dist_objs: GlobObjs):
         self.cfg = cfg
@@ -257,43 +412,35 @@ class SceneGen:
         self.bvh_tree = None
 
     def sample_objs(self):
-        self.sampled_target_objs = list(np.random.choice(self.target_objs, size=self.cfg.target_objects_num))
-        self.sampled_dist_objs = list(np.random.choice(self.dist_objs, size=self.cfg.distractor_objects_num))
-        self.sampled_target_meshes = [o.mesh for o in self.sampled_target_objs]
-        self.sampled_dist_meshes = [o.mesh for o in self.sampled_dist_objs]
+        self.sampled_target_objs, self.sampled_target_meshes = sample_add_objs(self.target_objs, self.cfg.target_objects_num, self.cfg.max_duplicate_objects)
+        self.sampled_dist_objs, self.sampled_dist_meshes = sample_add_objs(self.dist_objs, self.cfg.distractor_objects_num, self.cfg.max_duplicate_objects)
         self.sampled_objs = self.sampled_target_objs + self.sampled_dist_objs
         self.sampled_meshes = self.sampled_target_meshes + self.sampled_dist_meshes
         self.bvh_tree = bproc.object.create_bvh_tree_multi_objects(self.sampled_meshes)
 
-    def _sample_pose(self, obj: GlobObj):
+    def _sample_pose(self, mesh: MeshObject):
         pose1 = np.random.uniform([-0.6, -0.6, 0.2], [-0.4, -0.4, 0.4])
         pose2 = np.random.uniform([0.4, 0.4, 1.2], [0.6, 0.6, 1.4])
-        obj.mesh.set_location(np.random.uniform(pose1, pose2))
+        mesh.set_location(np.random.uniform(pose1, pose2))
 
     def sample_poses(self):
-        for obj in self.sampled_objs:
-            self._sample_pose(obj)
-            obj.show()
-            obj.activate_physics()
-
-        for obj in set(self.objs).difference(self.sampled_objs):
-            obj.mesh.set_location((100, 100, 100))
-            obj.hide()
-            obj.deactivate_physics()
+        for mesh in self.sampled_meshes:
+            self._sample_pose(mesh)
 
     def sample_textures(self):
         for obj in self.sampled_objs:
-            mat = obj.mesh.get_materials()[0]
-            col = np.random.uniform(0.1, 0.7)
-            grey_col = (col, col, col, 1.)
-            mat.set_principled_shader_value('Base Color', grey_col)
+            for mesh in obj.active_meshes:
+                mat = mesh.get_materials()[0]
+                col = np.random.uniform(0.1, 0.7)
+                grey_col = (col, col, col, 1.)
+                mat.set_principled_shader_value('Base Color', grey_col)
 
-            mat.set_principled_shader_value("Roughness", np.random.uniform(0, 0.5))
-            if obj.ds_name == 'itodd':
-                mat.set_principled_shader_value("Specular", np.random.uniform(0.3, 1.0))
-                mat.set_principled_shader_value("Metallic", np.random.uniform(0, 1.0))
-            if obj.ds_name == 'tless':
-                mat.set_principled_shader_value("Metallic", np.random.uniform(0, 0.5))
+                mat.set_principled_shader_value("Roughness", np.random.uniform(0, 0.5))
+                if obj.ds_name == 'itodd':
+                    mat.set_principled_shader_value("Specular", np.random.uniform(0.3, 1.0))
+                    mat.set_principled_shader_value("Metallic", np.random.uniform(0, 1.0))
+                if obj.ds_name == 'tless':
+                    mat.set_principled_shader_value("Metallic", np.random.uniform(0, 0.5))
 
 
 class DsGen:
@@ -301,6 +448,7 @@ class DsGen:
         self.cfg = cfg
         self.target_objs = load_objs(self.cfg.sds_root_path, self.cfg.target_dataset_name)
         self.dist_objs = load_objs(self.cfg.sds_root_path, self.cfg.distractor_dataset_name)
+        self.glob_objs = {obj.glob_id: obj for obj in itertools.chain(self.target_objs.values(), self.dist_objs.values())}
         self.room_planes, self.light_plane = make_room(sz=self.cfg.generation.room_size)
         self.light_plane_material, self.light_point = make_light()
         self.light_plane.replace_materials(self.light_plane_material)
@@ -362,25 +510,29 @@ class DsGen:
 
     def render(self) -> Dict[str, Any]:
         data = bproc.renderer.render()
-        data.update(bproc.renderer.render_segmap(map_by=['instance']))
+        data.update(render_segmap(obj_key='full_id'))
         print('Rendered data keys:', data.keys())
         return data
 
     def get_frame_gt(self) -> Dict[str, Any]:
         H_c2w_opencv = Matrix(WriterUtility.get_cam_attribute(
             bpy.context.scene.camera, 'cam2world_matrix', local_frame_change=['X', '-Y', '-Z']))
-        H_c2w_opencv_inv = H_c2w_opencv.inverted()
+        H_w2c_opencv = H_c2w_opencv.inverted()
         res = {}
-        for ind, obj in enumerate(self.scene_gen.sampled_objs):
-            H_m2w = Matrix(WriterUtility.get_common_attribute(obj.mesh.blender_obj, 'matrix_world'))
-            H_m2c = H_c2w_opencv_inv @ H_m2w
-            res[obj.glob_id] = {
-                'ds_name': obj.ds_name,
-                'ds_obj_id': obj.obj_id,
-                'glob_id': obj.glob_id,
-                'sampled_ind': ind,
-                'H_m2c': [list(r) for r in H_m2c],
-            }
+        for obj in self.scene_gen.sampled_objs:
+            for mesh in obj.active_meshes:
+                H_m2w = Matrix(WriterUtility.get_common_attribute(mesh.blender_obj, 'matrix_world'))
+                H_m2c = H_w2c_opencv @ H_m2w
+                full_id = mesh.blender_obj['full_id']
+                parts = full_id.split('_')
+                instance_num = int(parts[-1])
+                res[mesh.blender_obj['full_id']] = {
+                    'ds_name': obj.ds_name,
+                    'ds_obj_id': obj.obj_id,
+                    'glob_id': obj.glob_id,
+                    'instance_num': instance_num,
+                    'H_m2c': [list(r) for r in H_m2c],
+                }
         return res
 
     def get_gt(self) -> List[Dict[str, Any]]:
@@ -413,10 +565,9 @@ class DsGen:
         self.simulate_physics()
         self.sample_camera_poses()
 
-        # Must be enabled after keyframes created by camera sampler
-        if not self.normals_initialized:
-            bproc.renderer.enable_normals_output()
-            self.normals_initialized = True
+        # if not self.normals_initialized:
+        #     bproc.renderer.enable_normals_output()
+        #     self.normals_initialized = True
 
         data = self.render()
         data['gt'] = self.get_gt()
@@ -424,7 +575,7 @@ class DsGen:
         self.save_data(data)
 
     def run(self):
-        bproc.renderer.enable_depth_output(activate_antialiasing=self.cfg.generation.depth_antialiasing)
+        # bproc.renderer.enable_depth_output(activate_antialiasing=self.cfg.generation.depth_antialiasing)
         bproc.renderer.set_max_amount_of_samples(self.cfg.generation.render_samples)
 
         bproc.camera.set_resolution(*self.cfg.generation.image_size)
@@ -455,7 +606,7 @@ if __name__ == '__main__':
     CFG = init()
 
     # After init() we have our sources added to sys.path, so we can import all local modules
-    from sds.utils import read_yaml
+    from sds.utils.utils import read_yaml
 
     generate(CFG)
 

@@ -104,6 +104,7 @@ def densify(mesh: pymesh.Mesh, max_rel_dist: float = MAX_REL_DIST_DEFAULT, remov
 
 def main(cfg: Config) -> int:
     print(cfg)
+    norm_attr_name = 'vertex_normal'
     sds_ds_path = cfg.sds_root_path / cfg.dataset_name
     sds_models_path = sds_ds_path / 'models'
     sds_models_dense_path = sds_ds_path / 'models_dense'
@@ -120,11 +121,18 @@ def main(cfg: Config) -> int:
             if fpath_dst.exists() and not cfg.overwrite:
                 print(f'{fpath_dst} already exists')
             else:
+                if not fpath_src.name.startswith('obj_000017'):
+                    continue
                 print(f'Loading mesh from {fpath_src}')
+
                 mesh = pymesh.load_mesh(fpath_src.as_posix())
+
+                if mesh.has_attribute(norm_attr_name):
+                    mesh.remove_attribute(norm_attr_name)
                 mesh = densify(mesh, max_rel_dist=cfg.max_rel_dist)
-                print(f'Writing dense mesh in {fpath_dst}')
-                pymesh.save_mesh(fpath_dst.as_posix(), mesh)
+
+                print(f'Writing dense mesh in {fpath_dst}\n')
+                pymesh.save_mesh(fpath_dst.as_posix(), mesh, norm_attr_name)
 
     return 0
 

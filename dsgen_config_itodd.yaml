@@ -11,8 +11,7 @@ images_per_dir: 1000
 
 generation:
   room_size: 1.5
-  # scenes_num: 1000
-  scenes_num: 72
+  scenes_num: 1000
   depth_antialiasing: false
   render_samples: 50
   image_size: [1280, 960]
@@ -20,4 +19,4 @@ generation:
     images_num: 20
     target_objects_num: 30
     distractor_objects_num: 10
-
+    max_duplicate_objects: 3

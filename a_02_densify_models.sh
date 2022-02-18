@@ -12,5 +12,5 @@ export PYTHONPATH=$PYTHONPATH:$sds_src_path
 
 python a_02_densify_models.py \
   --sds-root-path $sds_root_path \
-  --dataset-name $dataset_name
+  --dataset-name $dataset_name --overwrite
 

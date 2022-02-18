@@ -9,7 +9,7 @@ In a new Conda environment with Python 3.9 install packages:
    conda install -c esri tensorflow-addons
    pip install -r requirements.txt
    ```
-2. Glut for Pyopengl
+2. Packages for Pyopengl, GLFW
    ```sh
    apt install freeglut3-dev
    ```

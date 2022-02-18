@@ -1,69 +1,98 @@
+import json
+import sys
+import time
+from enum import Enum
 from pathlib import Path
-from typing import List, Tuple
+import shutil
+from typing import Optional, Dict, List, Any, Tuple
 
-from pydantic import BaseModel, validator
-from pydantic_yaml import YamlStrEnum, YamlModel
+import cv2
+from OpenGL.GL import *
+from OpenGL.GL import shaders
+from OpenGL.GLUT import *
+from OpenGL.GLU import *
+import h5py
 import yaml
 
+import numpy as np
+from pydantic import BaseModel, Field
+from pydantic_cli import run_and_exit
+import pymesh
+from scipy.spatial.transform import Rotation as R
 
-class MyEnum(YamlStrEnum):
-    """This is a custom enumeration that is YAML-safe."""
+vertex_shader = shaders.compileShader("""
+#version 300 es
+const float M_PI = 3.1415926535897932384626433832795;
+layout(location = 0) in vec3 position;
+layout(location = 1) in vec3 normal;
+uniform mat4 obj_cam_mat;
+uniform mat4 proj_mat;
+uniform bool draw_normals;
+uniform float max_dist_to_center;
 
-    a = "a"
-    b = "b"
+out vec4 color_out;
 
-class InnerModel(BaseModel):
-    """This is a normal pydantic model that can be used as an inner class."""
+void main()
+{
+    gl_Position = proj_mat * obj_cam_mat * vec4(position, 1.0);
+    mat3 rot = mat3(obj_cam_mat);
+    vec3 col;
 
-    fld: float = 1.0
+    if (draw_normals) {
+        vec3 norm_pos = rot * normal;
+        col = norm_pos / 2.0 + 0.5;
+    } else {
+        vec3 cam_pos = rot * position;
+        col = -cam_pos / max_dist_to_center / 2.0 + 0.5;
+    }
 
-class MyModel(YamlModel):
-    """This is our custom class, with a `.yaml()` method.
+    color_out = vec4(col, 1);
+}
+""", GL_VERTEX_SHADER)
 
-    The `parse_raw()` and `parse_file()` methods are also updated to be able to
-    handle `content_type='application/yaml'`, `protocol="yaml"` and file names
-    ending with `.yml`/`.yaml`
-    """
+geometry_shader = shaders.compileShader("""
+#version 300 es
+layout (triangles) in;
+layout (triangle_strip, max_vertices = 3) out;
 
-    x: int = 1
-    e: MyEnum = MyEnum.a
-    m: InnerModel = InnerModel()
+uniform bool draw_normals;
+in vec4 color_out[3];
+out vec4 v_color;
 
-    @validator('x')
-    def _chk_x(cls, v: int) -> int:  # noqa
-        """You can add your normal pydantic validators, like this one."""
-        assert v > 0
-        return v
+void main()
+{
+    if (draw_normals) {
+        vec3 t1 = gl_in[1].gl_Position.xyz - gl_in[0].gl_Position.xyz;        
+        vec3 t2 = gl_in[2].gl_Position.xyz - gl_in[0].gl_Position.xyz;
+        vec3 n = normalize(cross(t1, t2));
+        if (n.z < 0.0) {
+            n = -n;
+        }
+        v_color = vec4(n, 1.0);
+        for (int i = 0; i < 3; i++) {
+            gl_Position = gl_in[i].gl_Position;
+            EmitVertex();
+        }
+        EndPrimitive();
+    } else {
+        for (int i = 0; i < 3; i++) {
+            gl_Position = gl_in[i].gl_Position;
+            v_color = color_out[i];
+            EmitVertex();
+        }
+        EndPrimitive();
+    }
+}
+""", GL_GEOMETRY_SHADER)
 
-m1 = MyModel(x=2, e="b", m=InnerModel(fld=1.5))
-
-# This dumps to YAML and JSON respectively
-yml = m1.yaml()
-jsn = m1.json()
-print(type(yml))
-
-with open('temp.yaml', 'w') as f:
-    f.write(yml)
-
-m2 = MyModel.parse_raw(yml)  # This automatically assumes YAML
-assert m1 == m2
-
-m3 = MyModel.parse_raw(jsn)  # This will fallback to JSON
-assert m1 == m3
-
-m4 = MyModel.parse_raw(yml, proto="yaml")
-assert m1 == m4
-
-m5 = MyModel.parse_raw(yml, content_type="application/yaml")
-assert m1 == m5
-
-
-class Config(YamlModel):
-    ds_path: Path
-    # x: List[int]
-    x: Tuple[int, int]
-    y: List[str]
-
-with open('dsgen_config_debug.yaml', 'r') as f:
-    cfg = Config.parse_raw(f.read())
-print(cfg)
+fragment_shader = shaders.compileShader("""
+#version 300 es
+precision highp float;
+in vec4 v_color;
+out vec4 outputColor;
+void main()
+{
+    outputColor = v_color;
+}
+""", GL_FRAGMENT_SHADER)
+program = shaders.compileProgram(vertex_shader, geometry_shader, fragment_shader)

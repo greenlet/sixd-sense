@@ -19,5 +19,6 @@ generation:
     images_num: 5
     target_objects_num: 30
     distractor_objects_num: 10
+    max_duplicate_objects: 3
 
 

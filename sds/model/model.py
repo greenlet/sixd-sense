@@ -125,7 +125,6 @@ def bifpn_bottom_up(feature_maps: List[List[Any]], num_channels: int, gn_enabled
     return features_out
 
 
-
 def bifpn_layer(feature_maps: List[Any], num_channels: int, gn_enabled: bool = True, name: str = 'BifpnLayer') -> List[Any]:
     pname = prefixer(name)
     feature_maps = list(reversed(feature_maps))
@@ -154,7 +153,7 @@ def final_upscale(fpn_feature_maps: List[Any], num_channels: int, name: str):
     
     feature_maps = bifpn_top_down(feature_maps_in, num_channels=num_channels, gn_enabled=False, name=pname('BifpnTopDown'))
     feature_map_out = feature_maps[-1]
-    feature_map_out = tf.keras.layers.Conv2DTranspose(num_channels, kernel_size=3, strides=2, padding='same')(feature_map_out)
+    feature_map_out = tf.keras.layers.Conv2DTranspose(num_channels, kernel_size=3, strides=2, padding='same', name=pname('Upscale'))(feature_map_out)
     return feature_map_out
 
 

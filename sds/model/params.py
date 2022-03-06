@@ -1,3 +1,5 @@
+from typing import List
+
 from sds.model.efficientnet import EfficientNetB0, EfficientNetB1, EfficientNetB2, EfficientNetB3, \
     EfficientNetB4, EfficientNetB5, EfficientNetB6
 
@@ -29,4 +31,8 @@ class ScaledParams:
         self.subnet_num_iteration_steps = self.subnet_iteration_steps_list[phi]
         self.num_groups_gn = self.num_groups_gn_list[phi]
         self.backbone_class = self.backbones[phi]
+
+    @classmethod
+    def phi_max(cls):
+        return len(cls.image_sizes) - 1
 

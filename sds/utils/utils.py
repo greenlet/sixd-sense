@@ -18,6 +18,11 @@ def read_yaml(file_path: Union[str, Path]) -> Any:
     return data
 
 
+def write_yaml(yamldata: Any, file_path: Union[str, Path]) -> Any:
+    with open(file_path, 'w') as f:
+        yaml.dump(yamldata, f)
+
+
 def read_ply(file_path: Union[str, Path]) -> PlyData:
     with open(file_path, 'rb') as f:
         plydata = PlyData.read(f)
@@ -27,6 +32,11 @@ def read_ply(file_path: Union[str, Path]) -> PlyData:
 def write_ply(plydata: PlyData, file_path: Union[str, Path]):
     with open(file_path, 'wb') as f:
         plydata.write(f)
+
+
+def write_txt(txt: str, file_path: Union[str, Path]):
+    with open(file_path, 'w') as f:
+        f.write(txt)
 
 
 def compose(*funcs):

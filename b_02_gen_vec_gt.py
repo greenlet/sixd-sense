@@ -175,15 +175,17 @@ class ProgContainer:
         void main()
         {
             if (draw_normals) {
-                //vec3 t1 = gl_in[1].gl_Position.xyz - gl_in[0].gl_Position.xyz;        
-                //vec3 t2 = gl_in[2].gl_Position.xyz - gl_in[0].gl_Position.xyz;
                 vec3 t1 = pos_out[1].xyz - pos_out[0].xyz;        
                 vec3 t2 = pos_out[2].xyz - pos_out[0].xyz;
-                vec3 n = normalize(cross(t1, t2));
-                if (n.z < 1e-3) {
-                    n = -n;
+                if (length(t1) < 1e-6 || length(t2) < 1e-6) {
+                    v_color = vec4(0.0, 0.0, 0.0, 1.0);
+                } else {
+                    vec3 n = normalize(cross(t1, t2));
+                    if (n.z < 0) {
+                        n = -n;
+                    }
+                    v_color = vec4(n * 0.5 + 0.5, 1.0);
                 }
-                v_color = vec4(n * 0.5 + 0.5, 1.0);
                 for (int i = 0; i < 3; i++) {
                     gl_Position = gl_in[i].gl_Position;
                     EmitVertex();
@@ -326,7 +328,6 @@ class Renderer:
         self.set_camera_matrix(cam_mat)
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-
 
         for obj in objs.values():
             mesh_obj = self.mesh_objs[obj['glob_id']]

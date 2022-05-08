@@ -1,8 +1,10 @@
 #!/bin/bash
 
 code_path=$HOME/prog
-data_path=$HOME/data
-sds_src_path=$code_path/sixd_sense
+#data_path=$HOME/data
+#sds_src_path=$code_path/sixd_sense
+data_path=/data/data
+sds_src_path=$code_path/sds
 
 sds_root_path=$data_path/sds
 target_dataset_name=$1
@@ -13,7 +15,7 @@ debug_arg=$5
 
 
 export PYTHONPATH=$PYTHONPATH:$sds_src_path
-
+export MESA_GL_VERSION_OVERRIDE=3.3
 
 python b_02_gen_vec_gt.py $debug_arg \
   --sds-root-path $sds_root_path \

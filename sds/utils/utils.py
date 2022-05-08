@@ -1,8 +1,9 @@
 import functools
 import json
+from datetime import datetime
 from pathlib import Path
 from plyfile import PlyData
-from typing import Union, Any
+from typing import Union, Any, Optional
 import yaml
 
 
@@ -42,4 +43,8 @@ def write_txt(txt: str, file_path: Union[str, Path]):
 def compose(*funcs):
     return functools.reduce(lambda f, g: lambda *args, **kwargs: g(f(*args, **kwargs)), funcs)
 
+
+def datetime_str(dt: Optional[datetime] = None) -> str:
+    dt = dt if dt is not None else datetime.now()
+    return dt.strftime('%Y%m%d_%H%M%S')
 

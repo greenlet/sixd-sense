@@ -121,8 +121,6 @@ def main(cfg: Config) -> int:
             if fpath_dst.exists() and not cfg.overwrite:
                 print(f'{fpath_dst} already exists')
             else:
-                if not fpath_src.name.startswith('obj_000017'):
-                    continue
                 print(f'Loading mesh from {fpath_src}')
 
                 mesh = pymesh.load_mesh(fpath_src.as_posix())
@@ -130,6 +128,7 @@ def main(cfg: Config) -> int:
                 if mesh.has_attribute(norm_attr_name):
                     mesh.remove_attribute(norm_attr_name)
                 mesh = densify(mesh, max_rel_dist=cfg.max_rel_dist)
+                mesh.add_attribute(norm_attr_name)
 
                 print(f'Writing dense mesh in {fpath_dst}\n')
                 pymesh.save_mesh(fpath_dst.as_posix(), mesh, norm_attr_name)

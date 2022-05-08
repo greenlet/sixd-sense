@@ -167,9 +167,10 @@ class ProgContainer:
         layout (triangles) in;
         layout (triangle_strip, max_vertices = 3) out;
 
+        uniform mat4 obj_cam_mat;
+        uniform bool draw_normals;
         in vec4 color_out[3];
         in vec4 pos_out[3];
-        uniform bool draw_normals;
         out vec4 v_color;
 
         void main()
@@ -177,14 +178,24 @@ class ProgContainer:
             if (draw_normals) {
                 vec3 t1 = pos_out[1].xyz - pos_out[0].xyz;        
                 vec3 t2 = pos_out[2].xyz - pos_out[0].xyz;
-                if (length(t1) < 1e-6 || length(t2) < 1e-6) {
+                if (length(t1) < 1e-7 || length(t2) < 1e-7) {
                     v_color = vec4(0.0, 0.0, 0.0, 1.0);
                 } else {
                     vec3 n = normalize(cross(t1, t2));
-                    if (n.z < 0) {
+                    vec3 center = (pos_out[0].xyz + pos_out[1].xyz + pos_out[2].xyz) / 3;
+                    //vec3 to_center = normalize(obj_cam_mat[3].xyz - center);
+                    vec3 to_center = normalize(-center);
+                    if (dot(n, to_center) < 0) {
                         n = -n;
                     }
-                    v_color = vec4(n * 0.5 + 0.5, 1.0);
+                    //if (n.z < 0) {
+                    //    n = -n;
+                    //}
+                    // v_color = vec4(n * 0.5 + 0.5, 1.0);
+                    float r = min(max(n.x / 2 + 0.5, 0), 1.0);
+                    float g = min(max(n.y / 2 + 0.5, 0), 1.0);
+                    float b = min(max(n.z / 2 + 0.5, 0), 1.0);
+                    v_color = vec4(r, g, b, 1.0);
                 }
                 for (int i = 0; i < 3; i++) {
                     gl_Position = gl_in[i].gl_Position;

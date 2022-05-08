@@ -11,7 +11,7 @@ In a new Conda environment with Python 3.9 install packages:
    ```
 2. Packages for Pyopengl, GLFW
    ```sh
-   apt install freeglut3-dev
+   sudo apt install freeglut3-dev
    ```
 3. Pymesh
     ```sh

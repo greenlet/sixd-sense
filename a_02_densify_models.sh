@@ -1,8 +1,10 @@
 #!/bin/bash
 
 code_path=$HOME/prog
-data_path=$HOME/data
-sds_src_path=$code_path/sixd_sense
+#data_path=$HOME/data
+#sds_src_path=$code_path/sixd_sense
+data_path=/data/data
+sds_src_path=$code_path/sds
 
 sds_root_path=$data_path/sds
 dataset_name=$1

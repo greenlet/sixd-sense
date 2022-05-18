@@ -15,6 +15,9 @@ from sds.utils import utils
 
 
 # Loads glob_id -> obj dictionary
+from sds.utils.utils import gen_colors
+
+
 def load_objs(sds_root_path: Path, target_dataset_name: str, distractor_dataset_name) -> Dict[str, Dict]:
     objs_target = utils.read_yaml(sds_root_path / target_dataset_name / 'models/models.yaml')
     objs_dist = utils.read_yaml(sds_root_path / distractor_dataset_name / 'models/models.yaml')
@@ -223,14 +226,20 @@ class DsLoader:
             a = a[..., None]
         a = a.astype(np.float32)
         if rescale:
-            a = (a - 127.5) / 128.0
+            a = (a - 127.5) / 127.5
         return a
 
-    def preprocess(self, img: np.ndarray, noc: np.ndarray, norms: np.ndarray, seg: np.ndarray) -> Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    def preprocess_(self, img: np.ndarray, noc: np.ndarray, norms: np.ndarray, seg: np.ndarray) -> Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
         img = self.to_float_input(img)
         noc = self.to_float_input(noc)
         norms = self.to_float_input(norms)
         seg = seg.astype(np.int32)
+        return img, (noc, norms, seg)
+
+    def preprocess(self, img: np.ndarray, noc: np.ndarray, norms: np.ndarray, seg: np.ndarray) -> Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        seg = seg.astype(np.int32)
+        if len(seg.shape) == 2:
+            seg = seg[..., None]
         return img, (noc, norms, seg)
 
     def gen(self):
@@ -242,14 +251,6 @@ class DsLoader:
             if self.gen_ind == n:
                 self.shuffle_if_enabled()
                 self.gen_ind = 0
-
-
-def gen_colors(n_steps: int = 10) -> List[Tuple[int, int, int]]:
-    step = 256 // n_steps
-    chan = lambda: range(step // 2, 256, step)
-    res = [(r, g, b) for r in chan() for g in chan() for b in chan()]
-    np.random.shuffle(res)
-    return res
 
 
 def _test_loader():

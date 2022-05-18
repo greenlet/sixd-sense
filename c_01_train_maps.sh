@@ -26,6 +26,9 @@ val_steps=200
 debug_arg=""
 bool_args="$freeze_bn_arg $new_learning_subdir_arg $debug_arg"
 
+#epochs=3
+#train_steps=5
+#val_steps=2
 
 python c_01_train_maps.py $bool_args \
   --sds-root-path $sds_root_path \

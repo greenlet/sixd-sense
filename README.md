@@ -5,8 +5,8 @@
 In a new Conda environment with Python 3.9 install packages:
 1. Tensorflow
    ```sh
-   conda install -c conda-forge tensorflow-gpu
-   conda install -c esri tensorflow-addons
+#   conda install -c conda-forge tensorflow-gpu
+#   conda install -c esri tensorflow-addons
    pip install -r requirements.txt
    ```
 2. Packages for Pyopengl, GLFW

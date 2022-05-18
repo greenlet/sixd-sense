@@ -2,8 +2,10 @@ import functools
 import json
 from datetime import datetime
 from pathlib import Path
+
+import numpy as np
 from plyfile import PlyData
-from typing import Union, Any, Optional
+from typing import Union, Any, Optional, List, Tuple
 import yaml
 
 
@@ -47,4 +49,15 @@ def compose(*funcs):
 def datetime_str(dt: Optional[datetime] = None) -> str:
     dt = dt if dt is not None else datetime.now()
     return dt.strftime('%Y%m%d_%H%M%S')
+
+
+def gen_colors(steps_per_chan: int = 10, seed: Optional[int] = None) -> List[Tuple[int, int, int]]:
+    step = 256 // steps_per_chan
+    chan = lambda: range(step // 2, 256, step)
+    res = [(r, g, b) for r in chan() for g in chan() for b in chan()]
+    if seed is not None:
+        np.random.seed(seed)
+    np.random.shuffle(res)
+    return res
+
 

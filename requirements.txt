@@ -4,6 +4,8 @@
 # tensorflow-addons>=0.13.0
 
 # PIP packages:
+tensorflow>=2.8.0
+tensorflow-addons>=0.16.1
 jupyter>=1.0.0
 pandas>=1.4.0
 matplotlib>=3.5.0

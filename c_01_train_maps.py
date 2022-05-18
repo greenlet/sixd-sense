@@ -1,4 +1,5 @@
 import json
+import math
 import sys
 import time
 from datetime import datetime
@@ -7,14 +8,6 @@ from pathlib import Path
 import shutil
 from typing import Optional, Dict, List, Any, Tuple
 
-import cv2
-import glfw
-from OpenGL.GL import *
-from OpenGL.GL import shaders
-from OpenGL.GLUT import *
-from OpenGL.GLU import *
-import h5py
-import yaml
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -25,10 +18,12 @@ import tensorflow as tf
 
 from sds.data.index import load_cache_ds_index, DsIndex
 from sds.data.loader import DsLoader, load_objs
+from sds.model.losses import MseNZLoss, CosNZLoss, SparseCategoricalCrossEntropyNZLoss
 from sds.model.model import bifpn_init, bifpn_layer, final_upscale
 from sds.model.params import ScaledParams
+from sds.model.processing import float_to_img
 from sds.utils import utils
-from sds.utils.utils import datetime_str
+from sds.utils.utils import datetime_str, gen_colors
 
 
 def set_memory_growth():
@@ -145,75 +140,6 @@ class Config(BaseModel):
     )
 
 
-class TripleLoss(tf.keras.losses.Loss):
-    def __init__(self, n_classes: int, weights: Tuple[float, float, float] = (1.0, 1.0, 1.0)):
-        super().__init__()
-        self.n_classes = n_classes
-        self.weights = tf.constant(weights)
-        self.seg_loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-        self.noc_loss = tf.keras.losses.MeanSquaredError()
-        self.norms_loss = tf.keras.losses.CosineSimilarity()
-
-    def call(self, y_true, y_pred, *args):
-        # print('y_true', type(y_true), type(y_true[0]))
-        # print('y_pred', type(y_pred), type(y_pred[0]))
-        print('y_true', type(y_true), y_true.shape)
-        print('y_pred', type(y_pred), y_pred.shape)
-        noc_true, noc_pred = y_true[..., :3], y_pred[..., :3]
-        norms_true, norms_pred = y_true[..., 3:6], y_pred[..., 3:6]
-        seg_true, seg_pred = y_true[..., -1:], y_pred[..., 6:]
-        seg_true = tf.cast(seg_true, tf.int32)
-        # print('noc', noc_true.shape, noc_pred.shape)
-        # print('norms', norms_true.shape, norms_pred.shape)
-        # print('seg', seg_true.shape, seg_pred.shape)
-        noc_loss = self.noc_loss(noc_true, noc_pred)
-        norms_loss = self.norms_loss(norms_true, norms_pred) + 1
-        seg_loss = self.seg_loss(seg_true, seg_pred)
-        return self.weights[0] * noc_loss + self.weights[1] * norms_loss + self.weights[2] * seg_loss
-
-
-class MseNZLoss(tf.keras.losses.Loss):
-    def __init__(self):
-        super().__init__(name=self.__class__.__name__)
-
-    def call(self, y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
-        mask = tf.cast(y_true, tf.bool)
-        y_true, y_pred = y_true[mask], y_pred[mask]
-        y_true = (tf.cast(y_true, tf.float32) - 127.5) / 128.0
-        diff = (y_true - y_pred) ** 2
-        res = tf.reduce_mean(diff)
-        return res
-
-
-class CosNZLoss(tf.keras.losses.Loss):
-    def __init__(self):
-        super().__init__(name=self.__class__.__name__)
-
-    def call(self, y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
-        mask = tf.cast(y_true, tf.bool)
-        y_true, y_pred = y_true[mask], y_pred[mask]
-        y_true = (tf.cast(y_true, tf.float32) - 127.5) / 128.0
-        y_true, y_pred = tf.reshape(y_true, (-1, 3)), tf.reshape(y_pred, (-1, 3))
-        loss_cos = tf.reduce_sum(y_true * y_pred, axis=-1) + 1
-        y_pred_norm = tf.norm(y_pred, axis=-1)
-        loss_cos /= y_pred_norm
-        loss_norm = 0.05 * (y_pred_norm - 1) ** 2
-        res = tf.reduce_mean(loss_cos + loss_norm)
-        return res
-
-
-class ScceNZLoss(tf.keras.losses.Loss):
-    def __init__(self):
-        super().__init__(name=self.__class__.__name__)
-        self.loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-
-    def call(self, y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
-        mask = tf.cast(y_true, tf.bool)[..., 0]
-        y_true, y_pred = y_true[mask], y_pred[mask]
-        # y_true, y_pred = tf.boolean_mask(y_true, mask), tf.boolean_mask(y_pred, mask)
-        return self.loss(y_true, y_pred)
-
-
 def build_ds(ds_loader: DsLoader, batch_size: int) -> tf.data.Dataset:
     out_sig = (
         tf.TensorSpec(shape=(*ds_loader.img_size, 3), dtype=tf.float32),
@@ -243,7 +169,7 @@ def build_datasets(cfg: Config) -> Tuple[DsLoader, DsLoader, tf.data.Dataset, tf
         shuffle_enabled=True, aug_enabled=True,
     )
     ds_loader_val = DsLoader(
-        ds_index, objs, is_training=True, img_size=params.input_size,
+        ds_index, objs, is_training=False, img_size=params.input_size,
         shuffle_enabled=True, aug_enabled=False,
     )
     ds_val = build_ds(ds_loader_train, cfg.batch_size)
@@ -271,20 +197,91 @@ def get_subdir_name(dt: datetime, ds_name: str, n_train: int, n_val: int):
     return f'{datetime_str(dt)}_{ds_name}_t{n_train}_v{n_val}'
 
 
+class PredictionVisualizer(tf.keras.callbacks.Callback):
+    log_path: Path
+    writer: Optional[tf.summary.SummaryWriter] = None
+    model: Optional[tf.keras.models.Model] = None
+
+    def __init__(self, log_path: Path, n_samples: int, ds_loader: DsLoader):
+        super().__init__()
+        self.log_path = log_path
+        self.n_samples = n_samples
+        self.n_cols = math.ceil(math.sqrt(self.n_samples))
+        self.n_rows = math.ceil(self.n_samples / self.n_cols)
+        self.img_size = ds_loader.img_size
+        self.img_w, self.img_h = self.img_size
+        self.grid_shape = tf.TensorShape((self.img_h * self.n_rows, self.img_w * self.n_cols, 3))
+        self.ds = build_ds(ds_loader, self.n_samples)
+        self.ds_iter = iter(self.ds)
+        self.colors = gen_colors()
+        self.epoch = -1
+
+    def images_to_grid(self, imgs: tf.Tensor) -> tf.Tensor:
+        grid = np.zeros(self.grid_shape, np.uint8)
+        for i in range(self.n_samples):
+            if i == imgs.shape[0]:
+                break
+            ir, ic = i // self.n_cols, i % self.n_cols
+            r1, r2 = ir * self.img_h, (ir + 1) * self.img_h
+            c1, c2 = ic * self.img_w, (ic + 1) * self.img_w
+            grid[r1:r2, c1:c2] = imgs[i].numpy()
+        return tf.convert_to_tensor(grid)
+
+    def color_seg(self, seg: tf.Tensor) -> tf.Tensor:
+        seg = np.squeeze(seg.numpy())
+        cls_nums = np.unique(seg)
+        res = np.zeros((*seg.shape[:3], 3), np.uint8)
+        for cls_num in cls_nums:
+            cls_num = int(cls_num)
+            # Skipping background
+            if cls_num == 0:
+                continue
+            color = self.colors[cls_num]
+            res[seg == cls_num] = color
+        return tf.convert_to_tensor(res)
+
+    def set_model(self, model: tf.keras.models.Model):
+        self.model = model
+
+    def on_train_begin(self, logs=None):
+        self.writer = tf.summary.create_file_writer(
+            self.log_path.as_posix(), filename_suffix='.image', name=self.__class__.__name__,
+        )
+
+    def on_epoch_begin(self, epoch, logs=None):
+        self.epoch = epoch
+
+    def on_test_end(self, logs=None):
+        imgs, maps_gt = next(self.ds_iter)
+        nocs_gt, norms_gt, segs_gt = maps_gt
+        nocs_pred, norms_pred, segs_pred = self.model(imgs)
+
+        segs_gt = self.color_seg(segs_gt)
+
+        nocs_pred = float_to_img(nocs_pred)
+        norms_pred = float_to_img(norms_pred)
+        segs_pred = tf.math.argmax(segs_pred, -1)
+        segs_pred = self.color_seg(segs_pred)
+
+        nocs_gt_grid = self.images_to_grid(nocs_gt)
+        norms_gt_grid = self.images_to_grid(norms_gt)
+        segs_gt_grid = self.images_to_grid(segs_gt)
+
+        nocs_pred_grid = self.images_to_grid(nocs_pred)
+        norms_pred_grid = self.images_to_grid(norms_pred)
+        segs_pred_grid = self.images_to_grid(segs_pred)
+
+        self.writer.set_as_default()
+        tf.summary.image('segs', [segs_gt_grid, segs_pred_grid], self.epoch)
+        tf.summary.image('nocs', [nocs_gt_grid, nocs_pred_grid], self.epoch)
+        tf.summary.image('norms', [norms_gt_grid, norms_pred_grid], self.epoch)
+        self.writer.flush()
+
+
 def main(cfg: Config) -> int:
     print(cfg)
 
     dsl_train, dsl_val, ds_train, ds_val = build_datasets(cfg)
-    # it = iter(ds_train)
-    # item = next(it)
-    # print(item[0].shape, item[0].dtype, len(item[1]))
-    # for x in item[1]:
-    #     print(x.shape, x.dtype, tf.reduce_min(x), tf.reduce_max(x), tf.reduce_mean(x))
-    # it = iter(ds_val)
-    # item = next(it)
-    # print(item[0].shape, item[0].dtype, len(item[1]))
-    # for x in item[1]:
-    #     print(x.shape, x.dtype, tf.reduce_min(x), tf.reduce_max(x), tf.reduce_mean(x))
 
     out_subdir_name = get_subdir_name(
         datetime.now(), cfg.target_dataset_name, len(dsl_train), len(dsl_val))
@@ -296,13 +293,12 @@ def main(cfg: Config) -> int:
     set_memory_growth()
 
     model = build_model(n_classes, cfg)
-    # loss = TripleLoss(n_classes)
     model.compile(
         optimizer=tf.keras.optimizers.RMSprop(learning_rate=1e-3),
         loss=[
             MseNZLoss(),
             CosNZLoss(),
-            ScceNZLoss(),
+            SparseCategoricalCrossEntropyNZLoss(),
         ],
     )
     callbacks = [
@@ -327,7 +323,8 @@ def main(cfg: Config) -> int:
         ),
         tf.keras.callbacks.ReduceLROnPlateau(
             factor=0.5, patience=7, min_lr=1e-8,
-        )
+        ),
+        PredictionVisualizer(out_path, 9, dsl_val),
     ]
     model.fit(
         ds_train,

@@ -25,9 +25,9 @@ class CosNZLoss(tf.keras.losses.Loss):
         y_true, y_pred = y_true[mask], y_pred[mask]
         y_true = img_to_float(y_true)
         y_true, y_pred = tf.reshape(y_true, (-1, 3)), tf.reshape(y_pred, (-1, 3))
-        loss_cos = tf.reduce_sum(y_true * y_pred, axis=-1) + 1
+        loss_cos = tf.reduce_sum(y_true * y_pred, axis=-1)
         y_pred_norm = tf.norm(y_pred, axis=-1)
-        loss_cos /= y_pred_norm
+        loss_cos = loss_cos / y_pred_norm + 1
         loss_norm = 0.05 * (y_pred_norm - 1) ** 2
         res = tf.reduce_mean(loss_cos + loss_norm)
         return res

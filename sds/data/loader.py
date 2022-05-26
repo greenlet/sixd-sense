@@ -95,20 +95,25 @@ def glob_inst_to_glob_id(glob_inst_id: str) -> str:
     return glob_inst_id[:glob_inst_id.rfind('_')]
 
 
+DsItem = Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]
+
+
 class DsLoader:
     def __init__(self, ds_index: DsIndex, objs: Dict[str, Dict], is_training: bool, img_size: Union[int, Tuple[int, int]],
-                 shuffle_enabled: bool, aug_enabled: bool = False):
+                 shuffle_enabled: bool, aug_enabled: bool = False, hist_sz: int = 0):
         self.ds_index = ds_index
         self.ds_path = self.ds_index.root_path
         self.objs = objs
         self.num_to_obj_id = {obj['id_num']: glob_id for glob_id, obj in self.objs.items()}
         self.is_training = is_training
         self.img_size = img_size if type(img_size) == tuple else (img_size, img_size)
+        self.img_width, self.img_height = self.img_size
         if self.is_training:
             self.ds_inds = self.ds_index.inds_train
         else:
             self.ds_inds = self.ds_index.inds_val
         self.shaffle_enabled = shuffle_enabled
+        self.shuffle_if_enabled()
 
         self.aug_enabled = aug_enabled
         self.aug_geom = None
@@ -116,6 +121,8 @@ class DsLoader:
         self.aug_resize = None
         self.create_aug_resize()
 
+        self.hist_sz = hist_sz
+        self.hist = []
         self.gen_ind = 0
 
     def shuffle(self):
@@ -129,7 +136,8 @@ class DsLoader:
         return len(self.ds_inds)
 
     def create_aug_resize(self):
-        aspect_ratio = self.img_size[0] / self.img_size[1]
+        aspect_ratio = self.img_width / self.img_height
+        resize_dims = {'width': self.img_width, 'height': self.img_height}
 
         if self.aug_enabled:
             self.aug_geom = iaa.Affine(
@@ -138,16 +146,19 @@ class DsLoader:
 
             self.aug_img = iaa.Sequential([
                 iaa.Sometimes(0.5, iaa.OneOf([
-                    iaa.MultiplyAndAddToBrightness(),
+                    iaa.MultiplyAndAddToBrightness(
+                        mul=(0.9, 1.5),
+                        add=(-10, 40),
+                    ),
                     iaa.MultiplyHueAndSaturation(mul=(0.7, 1.3)),
                     iaa.Grayscale(),
                     iaa.GammaContrast(),
                     iaa.HistogramEqualization(),
                 ])),
                 iaa.Sometimes(0.5, iaa.OneOf([
-                    iaa.AdditiveGaussianNoise(scale=(5, 15)),
+                    iaa.AdditiveGaussianNoise(scale=(2, 12)),
                     iaa.Dropout(p=(0.01, 0.04)),
-                    iaa.SaltAndPepper(p=(0.01, 0.04)),
+                    iaa.SaltAndPepper(p=(0.01, 0.03)),
                 ])),
                 iaa.Sometimes(0.5, iaa.OneOf([
                     iaa.Sharpen(),
@@ -166,13 +177,13 @@ class DsLoader:
                     iaa.CenterCropToAspectRatio(aspect_ratio),
                     iaa.CenterPadToAspectRatio(aspect_ratio),
                 ]),
-                iaa.Resize(self.img_size),
+                iaa.Resize(resize_dims),
             ])
 
         else:
             self.aug_resize = iaa.Sequential([
                 iaa.CenterPadToAspectRatio(aspect_ratio),
-                iaa.Resize(self.img_size),
+                iaa.Resize(resize_dims),
             ])
 
     def augment(self, img: np.ndarray, noc: np.ndarray, norms: np.ndarray, segmap: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -207,7 +218,7 @@ class DsLoader:
         return glob_segmap, glob_id_to_num, glob_num_to_id
 
     def load_item(self, i: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        item_path, noc_path, norms_path = self.ds_index.get_paths(i)
+        item_path, noc_path, norms_path = self.ds_index.get_paths(self.ds_inds[i])
         item = read_gt_item(item_path)
         noc_img = cv2.imread(noc_path.as_posix())
         norms_img = cv2.imread(norms_path.as_posix())
@@ -229,28 +240,37 @@ class DsLoader:
             a = (a - 127.5) / 127.5
         return a
 
-    def preprocess_(self, img: np.ndarray, noc: np.ndarray, norms: np.ndarray, seg: np.ndarray) -> Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    def preprocess_(self, img: np.ndarray, noc: np.ndarray, norms: np.ndarray, seg: np.ndarray) -> DsItem:
         img = self.to_float_input(img)
         noc = self.to_float_input(noc)
         norms = self.to_float_input(norms)
         seg = seg.astype(np.int32)
         return img, (noc, norms, seg)
 
-    def preprocess(self, img: np.ndarray, noc: np.ndarray, norms: np.ndarray, seg: np.ndarray) -> Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    def preprocess(self, img: np.ndarray, noc: np.ndarray, norms: np.ndarray, seg: np.ndarray) -> DsItem:
         seg = seg.astype(np.int32)
         if len(seg.shape) == 2:
             seg = seg[..., None]
         return img, (noc, norms, seg)
 
+    def add_to_hist(self, item: DsItem):
+        if len(self.hist) < self.hist_sz:
+            self.hist.append(item)
+
     def gen(self):
         n = len(self.ds_inds)
         while True:
             item = self.load_resize_augment(self.gen_ind)
-            yield self.preprocess(*item)
+            item = self.preprocess(*item)
+            self.add_to_hist(item)
+            yield item
             self.gen_ind += 1
             if self.gen_ind == n:
                 self.shuffle_if_enabled()
                 self.gen_ind = 0
+
+    def on_epoch_begin(self):
+        self.hist.clear()
 
 
 def _test_loader():
@@ -258,8 +278,10 @@ def _test_loader():
     ds_path = root_path / 'itodd'
     ds_index = load_cache_ds_index(ds_path)
     objs = load_objs(root_path, 'itodd', 'tless')
-    ds_loader = DsLoader(ds_index, objs, True, 600, False, False)
+    ds_loader = DsLoader(ds_index, objs, True, 600, shuffle_enabled=True, aug_enabled=True)
     colors = gen_colors()
+    cv2.namedWindow('grid')
+    cv2.moveWindow('grid', 100, 10)
     for i in range(len(ds_loader)):
         img, noc, norms, segmap = ds_loader.load_resize_augment(i)
         seg_img = SegmentationMapsOnImage(segmap, shape=img.shape)

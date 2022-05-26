@@ -6,8 +6,7 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 import shutil
-from typing import Optional, Dict, List, Any, Tuple
-
+from typing import Optional, Dict, List, Any, Tuple, Union
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -21,7 +20,7 @@ from sds.data.loader import DsLoader, load_objs
 from sds.model.losses import MseNZLoss, CosNZLoss, SparseCategoricalCrossEntropyNZLoss
 from sds.model.model import bifpn_init, bifpn_layer, final_upscale
 from sds.model.params import ScaledParams
-from sds.model.processing import float_to_img
+from sds.model.processing import float_to_img, img_to_float
 from sds.utils import utils
 from sds.utils.utils import datetime_str, gen_colors
 
@@ -138,20 +137,31 @@ class Config(BaseModel):
         required=False,
         cli=('--debug',),
     )
+    n_img_vis: int = Field(
+        9,
+        description='Number of images for inference visualization on each train/val epoch',
+        required=False,
+        cli=('--n-img-vis', ),
+    )
+
+
+def preprocess(img: tf.Tensor, maps: Tuple[tf.Tensor, ...]) -> Tuple[tf.Tensor, Tuple[tf.Tensor, ...]]:
+    return img_to_float(img), maps
 
 
 def build_ds(ds_loader: DsLoader, batch_size: int) -> tf.data.Dataset:
     out_sig = (
         tf.TensorSpec(shape=(*ds_loader.img_size, 3), dtype=tf.float32),
         (
-            tf.TensorSpec(shape=(*ds_loader.img_size, 3), dtype=tf.float32),
-            tf.TensorSpec(shape=(*ds_loader.img_size, 3), dtype=tf.float32),
+            tf.TensorSpec(shape=(*ds_loader.img_size, 3), dtype=tf.int32),
+            tf.TensorSpec(shape=(*ds_loader.img_size, 3), dtype=tf.int32),
             tf.TensorSpec(shape=(*ds_loader.img_size, 1), dtype=tf.int32),
         )
     )
     ds = tf.data.Dataset \
         .from_generator(ds_loader.gen, output_signature=out_sig) \
         .batch(batch_size) \
+        .map(preprocess) \
         .prefetch(tf.data.AUTOTUNE)
     return ds
 
@@ -166,14 +176,14 @@ def build_datasets(cfg: Config) -> Tuple[DsLoader, DsLoader, tf.data.Dataset, tf
     objs = load_objs(cfg.sds_root_path, cfg.target_dataset_name, cfg.distractor_dataset_name)
     ds_loader_train = DsLoader(
         ds_index, objs, is_training=True, img_size=params.input_size,
-        shuffle_enabled=True, aug_enabled=True,
+        shuffle_enabled=True, aug_enabled=True, hist_sz=cfg.n_img_vis,
     )
     ds_loader_val = DsLoader(
         ds_index, objs, is_training=False, img_size=params.input_size,
-        shuffle_enabled=True, aug_enabled=False,
+        shuffle_enabled=True, aug_enabled=False, hist_sz=cfg.n_img_vis,
     )
-    ds_val = build_ds(ds_loader_train, cfg.batch_size)
-    ds_train = build_ds(ds_loader_val, cfg.batch_size)
+    ds_train = build_ds(ds_loader_train, cfg.batch_size)
+    ds_val = build_ds(ds_loader_val, cfg.batch_size)
     return ds_loader_train, ds_loader_val, ds_train, ds_val
 
 
@@ -202,33 +212,40 @@ class PredictionVisualizer(tf.keras.callbacks.Callback):
     writer: Optional[tf.summary.SummaryWriter] = None
     model: Optional[tf.keras.models.Model] = None
 
-    def __init__(self, log_path: Path, n_samples: int, ds_loader: DsLoader):
+    def __init__(self, log_path: Path, dsl_train: DsLoader, dsl_val: DsLoader):
         super().__init__()
         self.log_path = log_path
-        self.n_samples = n_samples
+        self.dsl_train = dsl_train
+        self.dsl_val = dsl_val
+        self.n_samples = self.dsl_train.hist_sz
         self.n_cols = math.ceil(math.sqrt(self.n_samples))
         self.n_rows = math.ceil(self.n_samples / self.n_cols)
-        self.img_size = ds_loader.img_size
+        self.img_size = dsl_train.img_size
         self.img_w, self.img_h = self.img_size
         self.grid_shape = tf.TensorShape((self.img_h * self.n_rows, self.img_w * self.n_cols, 3))
-        self.ds = build_ds(ds_loader, self.n_samples)
-        self.ds_iter = iter(self.ds)
         self.colors = gen_colors()
         self.epoch = -1
 
-    def images_to_grid(self, imgs: tf.Tensor) -> tf.Tensor:
+    def images_to_grid(self, imgs: Union[tf.Tensor, List[np.ndarray]]) -> tf.Tensor:
+        if isinstance(imgs, tf.Tensor):
+            imgs = imgs.numpy()
         grid = np.zeros(self.grid_shape, np.uint8)
-        for i in range(self.n_samples):
-            if i == imgs.shape[0]:
+        for i in range(len(imgs)):
+            if i == len(imgs):
                 break
             ir, ic = i // self.n_cols, i % self.n_cols
             r1, r2 = ir * self.img_h, (ir + 1) * self.img_h
             c1, c2 = ic * self.img_w, (ic + 1) * self.img_w
-            grid[r1:r2, c1:c2] = imgs[i].numpy()
+            img = imgs[i]
+            if isinstance(img, tf.Tensor):
+                img = img.numpy()
+            grid[r1:r2, c1:c2] = img
         return tf.convert_to_tensor(grid)
 
-    def color_seg(self, seg: tf.Tensor) -> tf.Tensor:
-        seg = np.squeeze(seg.numpy())
+    def color_seg(self, seg: Union[tf.Tensor, np.ndarray]) -> tf.Tensor:
+        if isinstance(seg, tf.Tensor):
+            seg = seg.numpy()
+        seg = np.squeeze(seg)
         cls_nums = np.unique(seg)
         res = np.zeros((*seg.shape[:3], 3), np.uint8)
         for cls_num in cls_nums:
@@ -250,31 +267,68 @@ class PredictionVisualizer(tf.keras.callbacks.Callback):
 
     def on_epoch_begin(self, epoch, logs=None):
         self.epoch = epoch
+        self.dsl_train.on_epoch_begin()
+        self.dsl_val.on_epoch_begin()
 
-    def on_test_end(self, logs=None):
-        imgs, maps_gt = next(self.ds_iter)
-        nocs_gt, norms_gt, segs_gt = maps_gt
-        nocs_pred, norms_pred, segs_pred = self.model(imgs)
+    def normalize(self, t: Union[tf.Tensor, np.ndarray], eps: float = 1e-5) -> tf.Tensor:
+        a = t if isinstance(t, np.ndarray) else t.numpy().copy()
+        an = np.linalg.norm(a, axis=-1)
+        am = an >= eps
+        a[am] /= an[am][..., None]
+        return tf.convert_to_tensor(a)
 
-        segs_gt = self.color_seg(segs_gt)
+    def vis_hist(self, dsl: DsLoader) -> Tuple[tf.Tensor, Tuple[tf.Tensor, tf.Tensor, tf.Tensor], Tuple[tf.Tensor, tf.Tensor, tf.Tensor]]:
+        imgs, nocs, norms, segs = [], [], [], []
+        for img, (noc, norm, seg) in dsl.hist:
+            imgs.append(img)
+            nocs.append(noc)
+            norms.append(norm)
+            segs.append(seg)
+
+        imgs_in = tf.stack(imgs)
+        imgs_in = img_to_float(imgs_in)
+        nocs_pred, norms_pred, segs_pred = self.model(imgs_in)
+
+        segs = self.color_seg(np.stack(segs))
 
         nocs_pred = float_to_img(nocs_pred)
+        norms_pred = self.normalize(norms_pred)
         norms_pred = float_to_img(norms_pred)
         segs_pred = tf.math.argmax(segs_pred, -1)
         segs_pred = self.color_seg(segs_pred)
 
-        nocs_gt_grid = self.images_to_grid(nocs_gt)
-        norms_gt_grid = self.images_to_grid(norms_gt)
-        segs_gt_grid = self.images_to_grid(segs_gt)
+        imgs_grid = self.images_to_grid(imgs)
+
+        nocs_gt_grid = self.images_to_grid(nocs)
+        norms_gt_grid = self.images_to_grid(norms)
+        segs_gt_grid = self.images_to_grid(segs)
+        maps_gt_grid = nocs_gt_grid, norms_gt_grid, segs_gt_grid
 
         nocs_pred_grid = self.images_to_grid(nocs_pred)
         norms_pred_grid = self.images_to_grid(norms_pred)
         segs_pred_grid = self.images_to_grid(segs_pred)
+        maps_pred_grid = nocs_pred_grid, norms_pred_grid, segs_pred_grid
+
+        return imgs_grid, maps_gt_grid, maps_pred_grid
+
+    def on_test_end(self, logs=None):
+        if not self.dsl_train.hist or not self.dsl_val.hist:
+            return
+        imgs_train, maps_gt_train, maps_pred_train = self.vis_hist(self.dsl_train)
+        imgs_val, maps_gt_val, maps_pred_val = self.vis_hist(self.dsl_val)
+        nocs_gt_train, norms_gt_train, segs_gt_train = maps_gt_train
+        nocs_pred_train, norms_pred_train, segs_pred_train = maps_pred_train
+        nocs_gt_val, norms_gt_val, segs_gt_val = maps_gt_val
+        nocs_pred_val, norms_pred_val, segs_pred_val = maps_pred_val
 
         self.writer.set_as_default()
-        tf.summary.image('segs', [segs_gt_grid, segs_pred_grid], self.epoch)
-        tf.summary.image('nocs', [nocs_gt_grid, nocs_pred_grid], self.epoch)
-        tf.summary.image('norms', [norms_gt_grid, norms_pred_grid], self.epoch)
+        tf.summary.image('imgs_train_val', [imgs_train, imgs_val], self.epoch)
+        tf.summary.image('nocs_train', [nocs_gt_train, nocs_pred_train], self.epoch)
+        tf.summary.image('norms_train', [norms_gt_train, norms_pred_train], self.epoch)
+        tf.summary.image('segs_train', [segs_gt_train, segs_pred_train], self.epoch)
+        tf.summary.image('nocs_val', [nocs_gt_val, nocs_pred_val], self.epoch)
+        tf.summary.image('norms_val', [norms_gt_val, norms_pred_val], self.epoch)
+        tf.summary.image('segs_val', [segs_gt_val, segs_pred_val], self.epoch)
         self.writer.flush()
 
 
@@ -298,7 +352,8 @@ def main(cfg: Config) -> int:
         loss=[
             MseNZLoss(),
             CosNZLoss(),
-            SparseCategoricalCrossEntropyNZLoss(),
+            # SparseCategoricalCrossEntropyNZLoss(),
+            tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
         ],
     )
     callbacks = [
@@ -322,9 +377,9 @@ def main(cfg: Config) -> int:
             embeddings_metadata=None
         ),
         tf.keras.callbacks.ReduceLROnPlateau(
-            factor=0.5, patience=7, min_lr=1e-8,
+            factor=0.5, patience=8, min_lr=1e-8,
         ),
-        PredictionVisualizer(out_path, 9, dsl_val),
+        PredictionVisualizer(out_path, dsl_train, dsl_val),
     ]
     model.fit(
         ds_train,

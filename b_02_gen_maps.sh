@@ -17,7 +17,7 @@ debug_arg=$5
 export PYTHONPATH=$PYTHONPATH:$sds_src_path
 export MESA_GL_VERSION_OVERRIDE=3.3
 
-python b_02_gen_vec_gt.py $debug_arg \
+python b_02_gen_maps.py $debug_arg \
   --sds-root-path $sds_root_path \
   --target-dataset-name $target_dataset_name \
   --distractor-dataset-name $distractor_dataset_name \

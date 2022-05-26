@@ -63,6 +63,13 @@ class Config(BaseModel):
         required=True,
         cli=('--output-type',),
     )
+    rewrite: bool = Field(
+        False,
+        description='If set, existing maps will be rewritten. Otherwise only missing '
+                    'ones will be generated',
+        required=False,
+        cli=('--rewrite', ),
+    )
     debug: bool = Field(
         False,
         description='Debug mode. Renderings are calculated and visualized but not saved',
@@ -85,28 +92,34 @@ def load_models(models_path: Path) -> Dict[str, Dict]:
     return res
 
 
-def list_dataset(data_path: Path) -> Dict[str, Dict]:
+def list_dataset(data_path: Path, dst_root_path: Path, skip_if_dst_exists: bool) -> Dict[str, Dict]:
     scenes = {}
     n_items = 0
     for scene_path in data_path.iterdir():
         if not scene_path.is_dir():
             continue
+        dst_scene_path = dst_root_path / f'{scene_path.name}'
         scene_fpaths = []
         for fpath in scene_path.iterdir():
             if not (fpath.is_file() and fpath.suffix == '.hdf5'):
                 continue
-            scene_fpaths.append(fpath)
-        scene = {
-            'id': scene_path.name,
-            'path': scene_path,
-            'items': scene_fpaths,
-            'size': len(scene_fpaths)
-        }
-        scenes[scene_path.name] = scene
-        n_items += len(scene_fpaths)
+            dst_fpath = dst_scene_path / fpath.with_suffix('.png').name
+            if not (skip_if_dst_exists and dst_fpath.exists()):
+                scene_fpaths.append((fpath, dst_fpath))
+        if scene_fpaths:
+            scene = {
+                'id': scene_path.name,
+                'path': scene_path,
+                'dst_path': dst_scene_path,
+                'items': scene_fpaths,
+                'size': len(scene_fpaths)
+            }
+            scenes[scene_path.name] = scene
+            n_items += len(scene_fpaths)
 
     res = {
         'path': data_path,
+        'dst_path': dst_root_path,
         'size': n_items,
         'scenes': scenes,
     }
@@ -371,20 +384,19 @@ def main(cfg: Config) -> int:
 
     data_postifx = ''
     data_path = target_ds_path / f'data{data_postifx}'
-    data = list_dataset(data_path)
+    dst_root_path = data_path.parent / f'{data_path.name}_{cfg.output_type.value}'
+    dst_root_path.mkdir(parents=True, exist_ok=True)
+
+    data = list_dataset(data_path, dst_root_path, skip_if_dst_exists=not cfg.rewrite and not cfg.debug)
     print(f'Number of scenes: {len(data["scenes"])}. Files total: {data["size"]}')
 
     renderer = Renderer(models=models, debug=cfg.debug)
     renderer.init()
 
-    dst_root_path = data_path.parent / f'{data_path.name}_{cfg.output_type.value}'
-    dst_root_path.mkdir(parents=True, exist_ok=True)
-
     for scene in data['scenes'].values():
-        scene_path: Path = scene['path']
-        dst_scene_path = dst_root_path / f'{scene_path.name}'
+        dst_scene_path: Path = scene['dst_path']
         dst_scene_path.mkdir(parents=True, exist_ok=True)
-        for fpath in scene['items']:
+        for fpath, dst_fpath in scene['items']:
             print(fpath)
             img, cam_mat, img_size, objs = read_gt(fpath)
             renderer.set_window_size(img_size)

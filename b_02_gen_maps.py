@@ -195,15 +195,17 @@ class ProgContainer:
                     v_color = vec4(0.0, 0.0, 0.0, 1.0);
                 } else {
                     vec3 n = normalize(cross(t1, t2));
+                    //vec3 n = cross(t1, t2);
+                    //float nl = length(n);
+                    //if (nl > 1e-8) {
+                    //    n /= nl;
+                    //}
                     vec3 center = (pos_out[0].xyz + pos_out[1].xyz + pos_out[2].xyz) / 3;
                     //vec3 to_center = normalize(obj_cam_mat[3].xyz - center);
                     vec3 to_center = normalize(-center);
                     if (dot(n, to_center) < 0) {
                         n = -n;
                     }
-                    //if (n.z < 0) {
-                    //    n = -n;
-                    //}
                     // v_color = vec4(n * 0.5 + 0.5, 1.0);
                     float r = min(max(n.x / 2 + 0.5, 0), 1.0);
                     float g = min(max(n.y / 2 + 0.5, 0), 1.0);
@@ -365,6 +367,15 @@ class Renderer:
         image_buffer = glReadPixels(0, 0, self.width, self.height, GL_RGB, GL_UNSIGNED_BYTE)
         image = np.frombuffer(image_buffer, dtype=np.uint8).reshape((self.height, self.width, 3))
         image = cv2.flip(image, 0)
+
+        # imgf_src = (image.astype(np.float32) - 127.5) / 127.5
+        # imgf = np.linalg.norm(imgf_src, axis=-1)
+        # print(f'!!! {imgf.min()}, {imgf.max()}, {imgf.mean()}')
+        # imgf_src /= imgf[..., None]
+        # imgf_src = (imgf_src * 127.5 + 127.5).astype(np.uint8)
+        # imgf_src = cv2.cvtColor(imgf_src, cv2.COLOR_RGB2BGR)
+        # cv2.imshow('test', imgf_src)
+
         return image
 
 

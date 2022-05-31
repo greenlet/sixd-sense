@@ -1,42 +1,23 @@
-import json
 import math
-import sys
-import time
-from datetime import datetime
-from enum import Enum
-from pathlib import Path
+import os
 import shutil
-from typing import Optional, Dict, List, Any, Tuple, Union
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, List, Tuple, Union
 
 import numpy as np
+import tensorflow as tf
 from pydantic import BaseModel, Field
 from pydantic_cli import run_and_exit
-import pymesh
-from scipy.spatial.transform import Rotation as R
-import tensorflow as tf
 
-from sds.data.index import load_cache_ds_index, DsIndex
-from sds.data.loader import DsLoader, load_objs
-from sds.model.losses import MseNZLoss, CosNZLoss, SparseCategoricalCrossEntropyNZLoss
-from sds.model.model import bifpn_init, bifpn_layer, final_upscale
+from sds.data.index import load_cache_ds_index
+from sds.data.ds_loader import DsLoader
+from sds.model.losses import MseNZLoss, CosNZLoss
 from sds.model.params import ScaledParams
 from sds.model.processing import float_to_img, img_to_float
-from sds.utils import utils
-from sds.utils.utils import datetime_str, gen_colors
-
-
-def set_memory_growth():
-    gpus = tf.config.list_physical_devices('GPU')
-    if gpus:
-        try:
-            # Currently, memory growth needs to be the same across GPUs
-            for gpu in gpus:
-                tf.config.experimental.set_memory_growth(gpu, True)
-            logical_gpus = tf.config.list_logical_devices('GPU')
-            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-        except RuntimeError as e:
-            # Memory growth must be set before GPUs have been initialized
-            print(e)
+from sds.utils.tf_utils import tf_set_gpu_incremental_memory_growth
+from sds.utils.utils import datetime_str, gen_colors, load_objs
+from train_utils import build_maps_model, color_segmentation, normalize
 
 
 class Config(BaseModel):
@@ -78,8 +59,7 @@ class Config(BaseModel):
     )
     train_root_path: Path = Field(
         ...,
-        description='Training directory. For each new training new subdirectory will be created '
-                    'in LOGS_ROOT_PATH correspond',
+        description='Training directory. For each new training new subdirectory will be created ',
         required=True,
         cli=('--train-root-path',)
     )
@@ -187,22 +167,6 @@ def build_datasets(cfg: Config) -> Tuple[DsLoader, DsLoader, tf.data.Dataset, tf
     return ds_loader_train, ds_loader_val, ds_train, ds_val
 
 
-def build_model(n_classes: int, cfg: Config) -> tf.keras.models.Model:
-    params = ScaledParams(cfg.phi)
-    image_input = tf.keras.Input(params.input_shape, dtype=tf.float32)
-    _, bb_feature_maps = params.backbone_class(input_tensor=image_input, freeze_bn=cfg.freeze_bn)
-
-    fpn_init_feature_maps = bifpn_init(bb_feature_maps, params.bifpn_width, name='BifpnInit')
-    fpn_feature_maps = bifpn_layer(fpn_init_feature_maps, params.bifpn_width, name='Bifpn1')
-
-    noc_out = final_upscale(fpn_feature_maps, 3, name='Noc')
-    norms_out = final_upscale(fpn_feature_maps, 3, name='Normals')
-    seg_out = final_upscale(fpn_feature_maps, n_classes + 1, name='Segmentation')
-
-    model = tf.keras.models.Model(inputs=[image_input], outputs=[noc_out, norms_out, seg_out])
-    return model
-
-
 def get_subdir_name(dt: datetime, ds_name: str, n_train: int, n_val: int):
     return f'{datetime_str(dt)}_{ds_name}_t{n_train}_v{n_val}'
 
@@ -245,16 +209,7 @@ class PredictionVisualizer(tf.keras.callbacks.Callback):
     def color_seg(self, seg: Union[tf.Tensor, np.ndarray]) -> tf.Tensor:
         if isinstance(seg, tf.Tensor):
             seg = seg.numpy()
-        seg = np.squeeze(seg)
-        cls_nums = np.unique(seg)
-        res = np.zeros((*seg.shape[:3], 3), np.uint8)
-        for cls_num in cls_nums:
-            cls_num = int(cls_num)
-            # Skipping background
-            if cls_num == 0:
-                continue
-            color = self.colors[cls_num]
-            res[seg == cls_num] = color
+        res = color_segmentation(self.colors, seg)
         return tf.convert_to_tensor(res)
 
     def set_model(self, model: tf.keras.models.Model):
@@ -272,9 +227,7 @@ class PredictionVisualizer(tf.keras.callbacks.Callback):
 
     def normalize(self, t: Union[tf.Tensor, np.ndarray], eps: float = 1e-5) -> tf.Tensor:
         a = t if isinstance(t, np.ndarray) else t.numpy().copy()
-        an = np.linalg.norm(a, axis=-1)
-        am = an >= eps
-        a[am] /= an[am][..., None]
+        a = normalize(a)
         return tf.convert_to_tensor(a)
 
     def vis_hist(self, dsl: DsLoader) -> Tuple[tf.Tensor, Tuple[tf.Tensor, tf.Tensor, tf.Tensor], Tuple[tf.Tensor, tf.Tensor, tf.Tensor]]:
@@ -342,18 +295,26 @@ def main(cfg: Config) -> int:
     out_path = cfg.train_root_path / out_subdir_name
     weights_out_path = out_path / 'weights'
     weights_out_path.mkdir(parents=True, exist_ok=True)
+    params_out_path = out_path / 'params'
+    params_out_path.mkdir(parents=True, exist_ok=True)
+    index_fpath = dsl_train.ds_index.cache_file_path
+    shutil.copyfile(index_fpath, params_out_path / index_fpath.name)
 
     n_classes = len(dsl_train.objs)
-    set_memory_growth()
+    tf_set_gpu_incremental_memory_growth()
 
-    model = build_model(n_classes, cfg)
+    model = build_maps_model(n_classes, cfg.phi, cfg.freeze_bn)
     model.compile(
         optimizer=tf.keras.optimizers.RMSprop(learning_rate=1e-3),
         loss=[
+            ## -- NOC --
             MseNZLoss(),
-            CosNZLoss(),
-            # SparseCategoricalCrossEntropyNZLoss(),
+            ## -- Normals --
+            # CosNZLoss(),
+            MseNZLoss(),
+            ## -- Segmentation --
             tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+            # SparseCategoricalCrossEntropyNZLoss(),
         ],
     )
     callbacks = [

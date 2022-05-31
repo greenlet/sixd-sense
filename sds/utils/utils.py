@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 from plyfile import PlyData
-from typing import Union, Any, Optional, List, Tuple
+from typing import Union, Any, Optional, List, Tuple, Dict
 import yaml
 
 
@@ -61,3 +61,22 @@ def gen_colors(steps_per_chan: int = 10, seed: Optional[int] = None) -> List[Tup
     return res
 
 
+def load_objs(sds_root_path: Path, target_dataset_name: str, distractor_dataset_name: Optional[str] = None) -> Dict[str, Dict]:
+    objs_target = read_yaml(sds_root_path / target_dataset_name / 'models/models.yaml')
+
+    res = {}
+    max_glob_num = 0
+    for obj_id, obj in objs_target.items():
+        obj['ds_name'] = target_dataset_name
+        obj['glob_num'] = obj['id_num']
+        max_glob_num = max(max_glob_num, obj['id_num'])
+        res[f'{target_dataset_name}_{obj_id}'] = obj
+
+    if distractor_dataset_name is not None:
+        objs_dist = read_yaml(sds_root_path / distractor_dataset_name / 'models/models.yaml')
+        for obj_id, obj in objs_dist.items():
+            obj['ds_name'] = distractor_dataset_name
+            obj['glob_num'] = max_glob_num + obj['id_num']
+            res[f'{distractor_dataset_name}_{obj_id}'] = obj
+
+    return res

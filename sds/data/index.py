@@ -2,6 +2,7 @@ import math
 import math
 import os
 import pickle
+import re
 import time
 import traceback
 from pathlib import Path
@@ -9,6 +10,32 @@ from typing import List, Tuple, Optional, Dict
 
 import numpy as np
 from pydantic import BaseModel
+
+
+def index_fname_prefix(train_ratio: float):
+    return f'files_index_{train_ratio:.2f}'
+
+
+def get_save_file_path(root_path: Path, train_ratio: float) -> Optional[Path]:
+    prefix = index_fname_prefix(train_ratio)
+    fname_pat = re.compile('^' + prefix + r'_t(\d+)_v(\d+)\.pkl$')
+    fpath_max = None
+    sz_max = 0
+    for fpath in root_path.iterdir():
+        if not fpath.is_file():
+            continue
+        m = fname_pat.match(fpath.name)
+        if m:
+            train_sz, val_sz = int(m.group(1)), int(m.group(2))
+            sz = train_sz + val_sz
+            if sz > sz_max:
+                sz_max = sz
+                fpath_max = fpath
+    return fpath_max
+
+
+def save_file_name(train_ratio: float, n_train: int, n_val: int) -> str:
+    return f'{index_fname_prefix(train_ratio)}_t{n_train}_v{n_val}.pkl'
 
 
 class DsFiles(BaseModel):
@@ -41,19 +68,25 @@ class DsIndex(BaseModel):
         print(
             f'Train-val split. Train ratio: {train_ratio:0.2f}. n_train = {len(self.inds_train)}, n_val = {len(self.inds_val)}')
 
-    @staticmethod
-    def save_file_path(root_path: Path, train_ratio: float) -> Path:
-        return root_path / f'files_list_{train_ratio:.2f}.pkl'
+    @property
+    def cache_file_path(self):
+        fname = save_file_name(self.train_ratio, len(self.inds_train), len(self.inds_val))
+        return self.root_path / fname
 
     def save(self):
-        fpath = self.save_file_path(self.root_path, self.train_ratio)
-        with open(fpath, 'wb') as f:
+        with open(self.cache_file_path, 'wb') as f:
             pickle.dump(self, f)
 
     @classmethod
-    def load(cls, root_path: Path, train_ratio: float) -> Optional['DsIndex']:
-        fpath = cls.save_file_path(root_path, train_ratio)
-        if not fpath.exists():
+    def load(cls, root_path: Optional[Path] = None, train_ratio: Optional[float] = None, index_fpath: Optional[Path] = None) -> Optional['DsIndex']:
+        if index_fpath is not None:
+            with open(index_fpath, 'rb') as f:
+                return pickle.load(f)
+
+        assert root_path is not None and train_ratio is not None
+
+        fpath = get_save_file_path(root_path, train_ratio)
+        if fpath is None:
             return None
         try:
             with open(fpath, 'rb') as f:
@@ -94,10 +127,13 @@ def list_paths(ds_path: Path, data_dir: str = 'data') -> DsIndex:
     return ds_index
 
 
-def load_cache_ds_index(ds_path: Path, train_ratio: float = 0.9, force_reload: bool = False) -> DsIndex:
+def load_cache_ds_index(ds_path: Optional[Path] = None, train_ratio: float = 0.9, force_reload: bool = False, index_fpath: Optional[Path] = None) -> DsIndex:
     ds_index = None
+    if index_fpath is not None:
+        return DsIndex.load(index_fpath=index_fpath)
+
     if not force_reload:
-        ds_index = DsIndex.load(ds_path, train_ratio)
+        ds_index = DsIndex.load(root_path=ds_path, train_ratio=train_ratio)
 
     if ds_index is None:
         ds_index = list_paths(ds_path)
@@ -116,9 +152,13 @@ def _test_list_files():
     print('load_cache_ds_list start')
     reload = False
     # reload = True
-    ds_data = load_cache_ds_index(ds_path, force_reload=reload)
+    # ds_index = load_cache_ds_index(ds_path, force_reload=reload)
+    index_fpath = ds_path / 'files_index_0.90_t124814_v13868.pkl'
+    # index_fpath = ds_path / 'files_index_0.90_t57818_v6424.pkl'
+    print(f'Loading index from {index_fpath}')
+    ds_index = load_cache_ds_index(index_fpath=index_fpath)
     print(f'load_cache_ds_list stop: {time.time() - t:.3f}')
-    print(len(ds_data.items.files), 'train:', len(ds_data.inds_train), 'val:', len(ds_data.inds_val))
+    print(len(ds_index.items.files), 'train:', len(ds_index.inds_train), 'val:', len(ds_index.inds_val))
 
 
 if __name__ == '__main__':

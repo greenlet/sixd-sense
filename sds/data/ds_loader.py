@@ -1,41 +1,18 @@
 import dataclasses
 import json
 from pathlib import Path
-from typing import Dict, Tuple, Union, List, Iterable
+from typing import Dict, Tuple, Union
 
 import cv2
 import h5py
 import imgaug as ia
 from imgaug import augmenters as iaa, SegmentationMapsOnImage
 import numpy as np
-import tensorflow as tf
 
 from sds.data.index import DsIndex, load_cache_ds_index
-from sds.utils import utils
-
 
 # Loads glob_id -> obj dictionary
-from sds.utils.utils import gen_colors
-
-
-def load_objs(sds_root_path: Path, target_dataset_name: str, distractor_dataset_name) -> Dict[str, Dict]:
-    objs_target = utils.read_yaml(sds_root_path / target_dataset_name / 'models/models.yaml')
-    objs_dist = utils.read_yaml(sds_root_path / distractor_dataset_name / 'models/models.yaml')
-
-    res = {}
-    max_glob_num = 0
-    for obj_id, obj in objs_target.items():
-        obj['ds_name'] = target_dataset_name
-        obj['glob_num'] = obj['id_num']
-        max_glob_num = max(max_glob_num, obj['id_num'])
-        res[f'{target_dataset_name}_{obj_id}'] = obj
-
-    for obj_id, obj in objs_dist.items():
-        obj['ds_name'] = distractor_dataset_name
-        obj['glob_num'] = max_glob_num + obj['id_num']
-        res[f'{distractor_dataset_name}_{obj_id}'] = obj
-
-    return res
+from sds.utils.utils import gen_colors, load_objs
 
 
 @dataclasses.dataclass
@@ -100,7 +77,7 @@ DsItem = Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]
 
 class DsLoader:
     def __init__(self, ds_index: DsIndex, objs: Dict[str, Dict], is_training: bool, img_size: Union[int, Tuple[int, int]],
-                 shuffle_enabled: bool, aug_enabled: bool = False, hist_sz: int = 0):
+                 shuffle_enabled: bool = False, aug_enabled: bool = False, hist_sz: int = 0):
         self.ds_index = ds_index
         self.ds_path = self.ds_index.root_path
         self.objs = objs
@@ -230,22 +207,6 @@ class DsLoader:
     def load_resize_augment(self, i: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         item = self.load_item(i)
         return self.augment(*item)
-
-    @staticmethod
-    def to_float_input(a: np.ndarray, rescale: bool = True) -> np.ndarray:
-        if len(a.shape) == 2:
-            a = a[..., None]
-        a = a.astype(np.float32)
-        if rescale:
-            a = (a - 127.5) / 127.5
-        return a
-
-    def preprocess_(self, img: np.ndarray, noc: np.ndarray, norms: np.ndarray, seg: np.ndarray) -> DsItem:
-        img = self.to_float_input(img)
-        noc = self.to_float_input(noc)
-        norms = self.to_float_input(norms)
-        seg = seg.astype(np.int32)
-        return img, (noc, norms, seg)
 
     def preprocess(self, img: np.ndarray, noc: np.ndarray, norms: np.ndarray, seg: np.ndarray) -> DsItem:
         seg = seg.astype(np.int32)

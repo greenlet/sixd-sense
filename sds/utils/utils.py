@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+import pymesh
 from plyfile import PlyData
 from typing import Union, Any, Optional, List, Tuple, Dict
 import yaml
@@ -61,22 +62,32 @@ def gen_colors(steps_per_chan: int = 10, seed: Optional[int] = None) -> List[Tup
     return res
 
 
-def load_objs(sds_root_path: Path, target_dataset_name: str, distractor_dataset_name: Optional[str] = None) -> Dict[str, Dict]:
-    objs_target = read_yaml(sds_root_path / target_dataset_name / 'models/models.yaml')
-
+def load_objs(sds_root_path: Path, target_dataset_name: str, distractor_dataset_name: Optional[str] = None,
+              models_subdir: str = 'models', load_meshes: bool = False) -> Dict[str, Dict]:
+    target_models_path = sds_root_path / target_dataset_name / models_subdir
+    target_objs = read_yaml(target_models_path / 'models.yaml')
     res = {}
     max_glob_num = 0
-    for obj_id, obj in objs_target.items():
+    for obj_id, obj in target_objs.items():
         obj['ds_name'] = target_dataset_name
         obj['glob_num'] = obj['id_num']
+        if load_meshes:
+            obj_fpath = target_models_path / f'{obj_id}.ply'
+            obj['mesh'] = pymesh.load_mesh(obj_fpath.as_posix())
         max_glob_num = max(max_glob_num, obj['id_num'])
         res[f'{target_dataset_name}_{obj_id}'] = obj
 
     if distractor_dataset_name is not None:
-        objs_dist = read_yaml(sds_root_path / distractor_dataset_name / 'models/models.yaml')
+        distractor_models_path = sds_root_path / distractor_dataset_name / models_subdir
+        objs_dist = read_yaml(distractor_models_path / 'models.yaml')
         for obj_id, obj in objs_dist.items():
             obj['ds_name'] = distractor_dataset_name
             obj['glob_num'] = max_glob_num + obj['id_num']
+            if load_meshes:
+                obj_fpath = distractor_models_path / f'{obj_id}.ply'
+                obj['mesh'] = pymesh.load_mesh(obj_fpath.as_posix())
+
             res[f'{distractor_dataset_name}_{obj_id}'] = obj
 
     return res
+

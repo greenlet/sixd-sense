@@ -1,6 +1,7 @@
 import math
 
 import tensorflow as tf
+from tensorflow.keras import layers, activations, models
 from typing import Tuple, Union
 
 from sds.utils.common import IntOrTuple, int_to_tuple
@@ -10,8 +11,8 @@ def block_down(x: tf.Tensor, strides: IntOrTuple, ch_in: int, ch_out: int = 0, k
     strides = int_to_tuple(strides)
     if not ch_out:
         ch_out = ch_in * strides[0] * strides[1]
-    x = tf.keras.layers.Conv2D(ch_out, kernel_size, strides, 'same')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
+    x = layers.Conv2D(ch_out, kernel_size, strides, 'same')(x)
+    x = layers.BatchNormalization()(x)
     x = tf.nn.relu(x)
     return x, ch_out
 
@@ -20,50 +21,53 @@ def block_up(x: tf.Tensor, strides: IntOrTuple, ch_in: int, ch_out: int = 0, ker
     strides = int_to_tuple(strides)
     if not ch_out:
         ch_out = ch_in // (strides[0] * strides[1])
-    x = tf.keras.layers.Conv2DTranspose(ch_out, kernel_size, strides, 'same')(x)
+    x = layers.Conv2DTranspose(ch_out, kernel_size, strides, 'same')(x)
     return x, ch_out
 
 
-def build_pose_layers(input_size: Tuple[int, int] = (128, 128), input_channels: int = 6) -> Tuple[tf.Tensor, tf.Tensor]:
-    input_shape = input_size[1], input_size[0], input_channels
+# TODO: Generalize to various input sizes
+def build_pose_layers(input_size: int = 128, input_channels: int = 6) -> Tuple[Tuple[tf.Tensor, tf.Tensor], Tuple[tf.Tensor, tf.Tensor]]:
+    assert input_size == 128
+    input_shape = input_size, input_size, input_channels
     inp = tf.keras.Input(input_shape)
-    x = inp # 128, 128, 6
-    x, ch = block_down(x, (2, 1), input_channels, 16) # 64, 128, 16
-    x, ch = block_down(x, 2, ch) # 32, 64, 64
-    x, ch = block_down(x, 2, ch) # 16, 32, 256
-    x, ch = block_down(x, 2, ch) # 8, 16, 1024
-    x, ch = block_down(x, 2, ch, ch * 2) # 4, 8, 2048
-    x, ch = block_up(x, 2, ch, ch // 2) # 8, 16, 1024
-    x, ch = block_up(x, 2, ch, ch // 2) # 16, 32, 512
-    x, ch = block_up(x, 2, ch, ch // 2) # 32, 64, 256
-    x, ch = block_up(x, 2, ch, ch // 2) # 64, 128, 128
-    out = x
-    return inp, out
-
-
-def build_pose_layers_light(input_size: Tuple[int, int] = (128, 128), input_channels: int = 6) -> Tuple[tf.Tensor, tf.Tensor]:
-    input_shape = input_size[1], input_size[0], input_channels
-    inp = tf.keras.Input(input_shape)
+    inp_pose_size = 3
+    inp_pose = tf.keras.Input((inp_pose_size,), dtype=tf.float32)
     x, ch = inp, input_channels # 128, 128, 6
     x, ch = block_down(x, 2, ch, 16) # 64, 64, 16
     x, ch = block_down(x, 2, ch, ch * 2) # 32, 32, 32
     x, ch = block_down(x, 2, ch, ch * 2, 3) # 16, 16, 64
     x, ch = block_down(x, 2, ch, ch * 2, 3) # 8, 8, 128
     x, ch = block_down(x, 2, ch, ch * 2, 3) # 4, 4, 256
-    x, ch = block_down(x, (2, 1), ch, ch * 2, (3, 1)) # 2, 4, 512
-    x, ch = block_up(x, 2, ch, ch // 2, 3) # 4, 8, 256
-    x, ch = block_up(x, 2, ch, ch // 2, 3) # 8, 16, 128
-    x, ch = block_up(x, 2, ch, ch, 3) # 16, 32, 128
-    x, ch = block_up(x, 2, ch, ch, 3) # 32, 64, 128
-    x, ch = block_up(x, 2, ch, ch, 3) # 64, 128, 128
-    out = x
-    return inp, out
+    x, ch = block_down(x, 2, ch, ch * 2, 3) # 2, 2, 512
+    x, ch = layers.Conv2D(ch * 2, 2, activation='relu')(x), ch * 2 # 1, 1, 1024
+
+    x_pos = tf.reshape(x, (-1, ch))
+
+    x = tf.expand_dims(x, -2)
+    x, ch = layers.Conv3DTranspose(256, 2, 2, activation='relu')(x), 256 # 2, 2, 256
+    x, ch = layers.Conv3DTranspose(ch // 4, 2, 2, activation='relu')(x), ch // 4 # 4^3, 64
+    x, ch = layers.Conv3DTranspose(ch // 2, 2, 2, activation='relu')(x), ch // 2 # 8^3, 32
+    x, ch = layers.Conv3DTranspose(ch // 2, 2, 2, activation='relu')(x), ch // 2 # 16^3, 16
+    x, ch = layers.Conv3DTranspose(ch // 2, 2, 2, activation='relu')(x), ch // 2 # 32^3, 8
+    x, ch = layers.Conv3DTranspose(ch // 2, 2, 2, activation='relu')(x), ch // 2 # 64^3, 4
+    x, ch = layers.Conv3DTranspose(ch // 2, 2, 2, activation='relu')(x), ch // 2 # 128^3, 2
+    x, ch = layers.Conv3DTranspose(ch // 2, 2, 2)(x), ch // 2 # 256^3, 1
+    x = tf.reshape(x, (-1, 256, 256, 256))
+    x = activations.sigmoid(x)
+    out_rot = x
+
+    x_pos = layers.Concatenate(axis=-1)([x_pos, inp_pose]) # 1027
+    x_pos = layers.Dense(512, activation='relu')(x_pos)
+    x_pos = layers.Dense(256, activation='relu')(x_pos)
+    x_pos = layers.Dense(3, activation='relu')(x_pos)
+    out_pos = x_pos
+
+    return (inp, inp_pose), (out_rot, out_pos)
 
 
 if __name__ == '__main__':
     inp, out = build_pose_layers()
-    inp, out = build_pose_layers_light()
     print('out:', out)
-    model = tf.keras.models.Model(inputs=[inp], outputs=[out])
+    model = models.Model(inputs=inp, outputs=out)
     print(model.summary())
 

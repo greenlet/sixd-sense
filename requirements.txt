@@ -7,7 +7,7 @@
 tensorflow>=2.8.0
 tensorflow-addons>=0.16.1
 jupyter>=1.0.0
-pandas>=1.4.0
+pandas>=1.3.0
 matplotlib>=3.5.0
 scipy>=1.7.3
 pyyaml>=6.0
@@ -25,6 +25,7 @@ glfw>=2.5.0
 scikit-learn>=1.0.2
 imgaug>=0.4.0
 tqdm>=4.64.0
+open3d>=0.15.2
 
 # Built from source
 # pymesh2>=0.3

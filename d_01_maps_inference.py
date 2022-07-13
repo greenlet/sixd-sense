@@ -8,7 +8,7 @@ import tensorflow as tf
 
 from sds.data.index import load_cache_ds_index
 from sds.data.ds_loader import DsLoader
-from sds.model.processing import img_to_float, float_to_img
+from sds.model.processing import tf_img_to_float, tf_float_to_img
 from sds.utils.utils import load_objs, gen_colors
 from sds.data.image_loader import ImageLoader
 from sds.model.params import ScaledParams
@@ -76,7 +76,7 @@ def predict_on_dataset(model: tf.keras.models.Model, ds_loader: DsLoader):
 
     for img, (noc_gt, norms_gt, seg_gt) in ds_loader.gen():
         img_in = tf.convert_to_tensor(img)[None, ...]
-        img_in = img_to_float(img_in)
+        img_in = tf_img_to_float(img_in)
         noc_pred, norms_pred, seg_pred = model(img_in)
         seg_pred = tf.math.argmax(seg_pred, -1)
         noc_pred, norms_pred, seg_pred = noc_pred[0].numpy(), norms_pred[0].numpy(), seg_pred[0].numpy()
@@ -92,8 +92,8 @@ def predict_on_dataset(model: tf.keras.models.Model, ds_loader: DsLoader):
         img_vis[:h, w:2 * w] = noc_gt
         img_vis[:h, 2 * w:3 * w] = norms_gt
         img_vis[:h, 3 * w:] = color_segmentation(colors, seg_gt)
-        img_vis[h:, w:2 * w] = float_to_img(noc_pred)
-        img_vis[h:, 2 * w:3 * w] = float_to_img(norms_pred)
+        img_vis[h:, w:2 * w] = tf_float_to_img(noc_pred)
+        img_vis[h:, 2 * w:3 * w] = tf_float_to_img(norms_pred)
         img_vis[h:, 3 * w:] = color_segmentation(colors, seg_pred)
 
         img_vis = cv2.cvtColor(img_vis, cv2.COLOR_RGB2BGR)

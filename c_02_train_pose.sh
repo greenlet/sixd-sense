@@ -7,6 +7,7 @@ data_path=/data/data
 sds_src_path=$code_path/sds
 
 export PYTHONPATH=$PYTHONPATH:$sds_src_path
+export MESA_GL_VERSION_OVERRIDE=3.3
 
 sds_root_path=$data_path/sds
 dataset_name=itodd

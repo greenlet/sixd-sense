@@ -14,7 +14,7 @@ from sds.data.index import load_cache_ds_index
 from sds.data.ds_loader import DsLoader
 from sds.model.losses import MseNZLoss, CosNZLoss
 from sds.model.params import ScaledParams
-from sds.model.processing import float_to_img, img_to_float
+from sds.model.processing import tf_float_to_img, tf_img_to_float
 from sds.utils.tf_utils import tf_set_gpu_incremental_memory_growth
 from sds.utils.utils import datetime_str, gen_colors, load_objs
 from train_utils import build_maps_model, color_segmentation, normalize
@@ -126,7 +126,7 @@ class Config(BaseModel):
 
 
 def preprocess(img: tf.Tensor, maps: Tuple[tf.Tensor, ...]) -> Tuple[tf.Tensor, Tuple[tf.Tensor, ...]]:
-    return img_to_float(img), maps
+    return tf_img_to_float(img), maps
 
 
 def build_ds(ds_loader: DsLoader, batch_size: int) -> tf.data.Dataset:
@@ -239,14 +239,14 @@ class PredictionVisualizer(tf.keras.callbacks.Callback):
             segs.append(seg)
 
         imgs_in = tf.stack(imgs)
-        imgs_in = img_to_float(imgs_in)
+        imgs_in = tf_img_to_float(imgs_in)
         nocs_pred, norms_pred, segs_pred = self.model(imgs_in)
 
         segs = self.color_seg(np.stack(segs))
 
-        nocs_pred = float_to_img(nocs_pred)
+        nocs_pred = tf_float_to_img(nocs_pred)
         norms_pred = self.normalize(norms_pred)
-        norms_pred = float_to_img(norms_pred)
+        norms_pred = tf_float_to_img(norms_pred)
         segs_pred = tf.math.argmax(segs_pred, -1)
         segs_pred = self.color_seg(segs_pred)
 

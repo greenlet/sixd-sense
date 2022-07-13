@@ -134,7 +134,6 @@ def main(cfg: Config) -> int:
     print(f'Number of scenes: {len(data["scenes"])}. Files total: {data["size"]}')
 
     renderer = Renderer(models=models)
-    renderer.init()
 
     for scene in data['scenes'].values():
         dst_scene_path: Path = scene['dst_path']

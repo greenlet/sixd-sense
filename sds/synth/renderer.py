@@ -176,8 +176,8 @@ class MeshObj:
 class Renderer:
     def __init__(self, models: Dict[str, Dict], win_size: Tuple[int, int] = (640, 480), title: str = 'Renderer'):
         self.models = models
-        self.title = title
         self.width, self.height = win_size
+        self.title = title
         self.cam_mat = None
 
         if not glfw.init():
@@ -191,6 +191,7 @@ class Renderer:
         glEnable(GL_DEPTH_TEST)
         glfw.set_window_size_callback(self.window, self._on_window_resize)
         glfw.set_framebuffer_size_callback(self.window, self._on_framebuffer_resize)
+        glfw.swap_buffers(self.window)
 
         self.prog = ProgContainer()
 
@@ -203,9 +204,6 @@ class Renderer:
 
     def _on_framebuffer_resize(self, win, width, height):
         print(f'_on_framebuffer_resize: {width}x{height}')
-
-    def init(self):
-        glfw.swap_buffers(self.window)
 
     def create_mesh_objs(self) -> Dict[str, MeshObj]:
         res = {}

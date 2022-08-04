@@ -5,6 +5,9 @@ import tensorflow as tf
 
 from sds.model.processing import tf_img_to_float
 
+import logging
+logger = tf.get_logger()
+
 
 class MseNZLoss(tf.keras.losses.Loss):
     def __init__(self):
@@ -52,9 +55,15 @@ def get_rot_prob(y_pred: tf.Tensor, inds: tf.Tensor) -> tf.Tensor:
 
 
 class RotVecLoss(tf.keras.losses.Loss):
-    def __init__(self, N: int):
+    def __init__(self, N: int, diff_threshold: float = 0.2):
         super().__init__(name=self.__class__.__name__)
-        self.N = N
+        self.N = tf.constant(N, tf.float32)
+        self.diff_thres = tf.constant(diff_threshold, tf.float32)
+
+    def _rot_vec_to_inds(self, rv: tf.Tensor) -> tf.Tensor:
+        ys = (rv + np.pi) / (2 * np.pi)
+        inds = tf.clip_by_value(tf.math.floor(ys * self.N), 0, self.N - 1)
+        return tf.cast(inds, tf.int64)
 
     """Calculates loss between GT Rodriguez vector and predicted probabilities of all possible vectors
 
@@ -64,18 +73,34 @@ class RotVecLoss(tf.keras.losses.Loss):
     :param y_pred: batch_sz x N x N x N tensor containing predicted Rodriguez vectors probabilities
     """
     def call(self, y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
-        ys = y_true / (2 * np.pi)
-        y1 = ys + 1 / 2
-        y2 = -ys + 1 / 2
-        y1 = tf.cast(tf.math.floor(y1 * self.N), tf.int64)
-        y2 = tf.cast(tf.math.floor(y2 * self.N), tf.int64)
+        i, j = tf.cast(y_true[:, 0], tf.int64), tf.cast(y_true[:, 1], tf.int64)
+        rvec, diff = y_true[:, 2:5], y_true[:, 5]
+        m_pos = i == j
+        i_pos, rv_pos = i[m_pos][..., None], rvec[m_pos]
+        inds = self._rot_vec_to_inds(rv_pos)
+        inds = tf.concat([i_pos, inds], axis=1)
+        p = tf.gather_nd(y_pred, inds)
+        res = -tf.reduce_mean(tf.math.log(p))
 
-        # p1 = tf.gather_nd(y_pred, y1, batch_dims=1)
-        # p2 = tf.gather_nd(y_pred, y2, batch_dims=1)
+        m_neg = (diff > self.diff_thres) & ~m_pos
 
-        p1 = get_rot_prob(y_pred, y1)
-        p2 = get_rot_prob(y_pred, y2)
-        res = -tf.reduce_mean(tf.math.log(p1) + tf.math.log(p2))
+        def calc_neg():
+            i_neg, rv_neg = i[m_neg][..., None], rvec[m_neg]
+            inds = self._rot_vec_to_inds(rv_neg)
+            inds = tf.concat([i_neg, inds], axis=1)
+            p = tf.gather_nd(y_pred, inds)
+            return -tf.reduce_mean(tf.math.log(1 - p))
+
+        res += tf.cond(tf.reduce_sum(tf.cast(m_neg, tf.int32)) > 0, calc_neg, lambda: tf.constant(0, tf.float32))
         return res
 
 
+class TransLoss(tf.keras.losses.Loss):
+    def __init__(self):
+        super().__init__(name=self.__class__.__name__)
+
+    def call(self, y_true, y_pred):
+        diff = y_true - y_pred
+        diff = tf.reduce_sum(diff * diff, axis=-1)
+        diff = tf.reduce_mean(diff)
+        return diff

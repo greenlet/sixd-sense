@@ -8,7 +8,7 @@ import tensorflow as tf
 
 from sds.data.index import load_cache_ds_index
 from sds.data.ds_loader import DsLoader
-from sds.model.processing import tf_img_to_float, tf_float_to_img
+from sds.model.processing import tf_img_to_float, tf_float_to_img, np_float_to_img, np_img_to_float
 from sds.utils.utils import load_objs, gen_colors
 from sds.data.image_loader import ImageLoader
 from sds.model.params import ScaledParams
@@ -73,7 +73,6 @@ def predict_on_dataset(model: tf.keras.models.Model, ds_loader: DsLoader):
     cv2.imshow('maps', img_vis)
     cv2.moveWindow('maps', 0, 0)
 
-
     for img, (noc_gt, norms_gt, seg_gt) in ds_loader.gen():
         img_in = tf.convert_to_tensor(img)[None, ...]
         img_in = tf_img_to_float(img_in)
@@ -86,7 +85,9 @@ def predict_on_dataset(model: tf.keras.models.Model, ds_loader: DsLoader):
         norms_pred1 = np.linalg.norm(norms_pred, axis=-1)
         print(f'norms_gt. min: {norms_gt1.min()}. max: {norms_gt1.max()}. mean: {norms_gt1.mean()}')
         print(f'norms_pred. min: {norms_pred1.min()}. max: {norms_pred1.max()}. mean: {norms_pred1.mean()}')
+        # norms_gt = np_float_to_img(normalize(np_img_to_float(norms_gt)))
         normalize(norms_pred, inplace=True)
+        # norms_pred *= norms_gt1.max()
 
         img_vis[:h, :w] = img
         img_vis[:h, w:2 * w] = noc_gt
@@ -147,5 +148,5 @@ def main(cfg: Config) -> int:
 
 
 if __name__ == '__main__':
-    run_and_exit(Config, main, 'Convert ply object to meters, restructure objects\' metadata')
+    run_and_exit(Config, main, 'Run maps network inference')
 

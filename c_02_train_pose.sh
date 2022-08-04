@@ -12,11 +12,12 @@ export MESA_GL_VERSION_OVERRIDE=3.3
 sds_root_path=$data_path/sds
 dataset_name=itodd
 models_subdir='models'
-model_id_num=1
+#model_id_num=1
+model_id_num=3
 train_root_path=$data_path/sds_train_pose
 learning_rate=1e-3
 epochs=200
-batch_size=3
+batch_size=4
 train_steps=2000
 val_steps=200
 

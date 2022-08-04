@@ -67,8 +67,15 @@ class DsPoseLoader:
             seg_num = gt_item.segmap_key_to_num[glob_inst_id]
             obj_seg = gt_item.segmap == seg_num
             imgs_with_seg = (*imgs, obj_seg)
-            bb_center_cam, size_new, imgs1 = extract_pose(imgs_with_seg, gt_obj.H_m2c, gt_item.cam_mat)
-            imgs2 = resize_imgs(imgs1, self.img_out_size[0])
+            bb_center, size_new, imgs1 = extract_pose(imgs_with_seg, gt_obj.H_m2c, gt_item.cam_mat)
+            img1, img1_noc, img1_norms, img1_seg = imgs1
+            if img1_seg.mean() < 0.05:
+                continue
+            img1_seg_neg = ~img1_seg
+            img1_noc, img1_norms = img1_noc.copy(), img1_norms.copy()
+            img1_noc[img1_seg_neg] = 0
+            img1_norms[img1_seg_neg] = 0
+            imgs2 = resize_imgs((img1, img1_noc, img1_norms, img1_seg), self.img_out_size[0])
             resize_factor = self.img_out_size[0] / size_new
 
             img_out, img_noc_out, img_norms_out, seg_out = imgs2
@@ -76,7 +83,7 @@ class DsPoseLoader:
             pos = gt_obj.H_m2c[:3, 3]
 
             ds_item = DsPoseItem(img_noc, img_norms, img_noc_out, img_norms_out,
-                                 bb_center_cam, resize_factor,
+                                 gt_item.cam_mat, bb_center, resize_factor,
                                  rot_vec, pos, gt_item.img, img_out)
             ds_items.append(ds_item)
         return ds_items
@@ -108,39 +115,22 @@ def _test_ds_pose_loader():
     obj_num = 1
     obj_glob_id = obj_num_to_id[obj_num]
     dsp_loader = DsPoseLoader(ds_path, objs, img_size, obj_glob_id)
-    obj = objs[obj_glob_id]
-    obj_id = obj['id']
-    mesh_path = ds_path / 'models' / f'{obj_id}.ply'
-    mesh = pymesh.load_mesh(mesh_path.as_posix())
-    models = {obj_glob_id: {'mesh': mesh}}
-    ren = Renderer(models)
-    cam_mat_new = np.array([[img_size, 0, img_size / 2], [0, img_size, img_size / 2], [0, 0, 1]])
-    img_out = np.zeros((img_size * 2, img_size * 2, 3), np.uint8)
+
+    cv2.namedWindow('pose')
+    cv2.moveWindow('pose', 200, 100)
 
     for item in dsp_loader.gen():
-        cv2.imshow('img', item.img_src)
+        cv2.imshow('img_src', item.img_src)
+        img = np.zeros((2 * img_size, 2 * img_size, 3), np.uint8)
+        img[:img_size, :img_size] = item.img_noc_out
+        img[:img_size, img_size:2 * img_size] = item.img_norms_out
+        img[img_size:2 * img_size, :img_size] = item.img_noc_out
+        img[img_size:2 * img_size, img_size:2 * img_size] = item.img_norms_out
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        cv2.imshow('pose', img)
 
-        robjs_src = {}
-        obj_color = (255, 0, 0, 100)
-        for glob_inst_id, gt_obj, _, _, _, _ in crops:
-            robjs_src[glob_inst_id] = {'glob_id': obj_glob_id, 'H_m2c': gt_obj.H_m2c}
-        print(f'Number of {obj_glob_id}: {len(robjs_src)}')
-        ren.set_window_size(gt_item.img_out_size)
-        ren.gen_colors(gt_item.cam_mat, robjs_src, OutputType.Noc, obj_color)
-
-        for crop in crops:
-            glob_inst_id, gt_obj, obj_seg, center, resize_factor, imgs_new = crop
-            img_crop, noc_crop, norms_crop, seg_crop = imgs_new
-            img_out[:img_size, :img_size] = img_crop
-            img_out[:img_size, img_size:2 * img_size] = noc_crop
-            img_out[img_size:2 * img_size, :img_size] = norms_crop
-            img_out[img_size:2 * img_size, img_size:2 * img_size] = seg_crop[..., None] * 255
-            seg_frac = np.mean(seg_crop) * 100
-            cv2.putText(img_out, f'{seg_frac:3.02f}%', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            cv2.imshow('cropped', img_out)
-
-            if cv2.waitKey() in (27, ord('q')):
-                sys.exit(0)
+        if cv2.waitKey() in (27, ord('q')):
+            break
 
 
 if __name__ == '__main__':

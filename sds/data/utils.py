@@ -164,7 +164,8 @@ class DsPoseItem:
     img_norms_src: np.ndarray
     img_noc_out: np.ndarray
     img_norms_out: np.ndarray
-    bb_center_cam: np.ndarray
+    cam_mat: np.ndarray
+    bb_center: np.ndarray
     resize_factor: float
     rot_vec: np.ndarray
     pos: np.ndarray

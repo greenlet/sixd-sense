@@ -355,4 +355,4 @@ def main(cfg: Config) -> int:
 
 
 if __name__ == '__main__':
-    run_and_exit(Config, main, 'Convert ply object to meters, restructure objects\' metadata')
+    run_and_exit(Config, main, 'Train maps network')

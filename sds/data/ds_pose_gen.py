@@ -1,36 +1,15 @@
-import dataclasses
 from pathlib import Path
 import threading as thr
-from typing import Tuple, Dict, Any, Optional
+from typing import Tuple, Dict, Optional
 
 import cv2
-import imgaug as ia
-from imgaug import augmenters as iaa, SegmentationMapsOnImage
+from imgaug import augmenters as iaa
 import numpy as np
-from scipy.spatial.transform import Rotation as R
 
 from sds.data.utils import extract_pose, resize_imgs, DsPoseItem
 from sds.synth.renderer import Renderer, OutputType
 from sds.utils.common import IntOrTuple, int_to_tuple
-from sds.utils.utils import load_objs
-
-
-def calc_ref_dist_from_camera(cam_mat: np.ndarray, img_size: Tuple[int, int], obj: Dict[str, Any], hist_sz: int = 0) -> float:
-    img_sz = np.array(img_size, dtype=np.float64)
-    f, c = cam_mat[[0, 1], [0, 1]], cam_mat[:2, 2]
-    sz = np.minimum(c, img_sz - c)
-    diam_px = sz * 2 * 0.9
-    diam = obj['diameter']
-    dist = diam * f / diam_px
-    return np.max(dist)
-    # diam / dist * f <= diam_px
-    # (dist, dist) >= diam * f / diam_px
-
-
-def canonical_cam_mat_from_img(img_size: Tuple[int, int]) -> np.ndarray:
-    w, h = img_size
-    f = max(img_size)
-    return np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]], np.float64)
+from sds.utils.utils import load_objs, canonical_cam_mat_from_img, gen_rot_vec, make_transform
 
 
 class ConeFrustum:
@@ -96,13 +75,13 @@ class DsPoseGen:
 
         self.multi_threading = multi_threading
         if self.multi_threading:
-            renderer_thread = thr.Thread(target=self.thread_func)
-            renderer_thread.start()
+            self.renderer_thread = thr.Thread(target=self.thread_func)
             self.task_counter = 0
             self.task_event = thr.Event()
             self.result_event = thr.Event()
             self.results = []
             self.stopped = False
+            self.renderer_thread.start()
         else:
             self.renderer = Renderer(self.objs, self.img_base_size)
             self.renderer.set_camera_matrix(self.cam_mat)
@@ -129,26 +108,10 @@ class DsPoseGen:
             iaa.Cutout(nb_iterations=(2, 5), size=(0.1, 0.4), squared=False, fill_mode='constant', cval=0),
         ]))
 
-    @staticmethod
-    def gen_rot_vec() -> Tuple[np.ndarray, float]:
-        while True:
-            r = np.random.random((3,))
-            rl = np.linalg.norm(r)
-            if rl > 1e-6:
-                return r / rl, np.random.uniform(0, 2 * np.pi)
-
     def gen_pos(self) -> np.ndarray:
         obj_pose = self.obj_frustum.get_random_pose()
         obj_pose[-1] += self.obj_z_offset
         return obj_pose
-
-    @staticmethod
-    def make_transform(rot_vec: np.ndarray, rot_alpha: float, pos: np.ndarray) -> np.ndarray:
-        rot = R.from_rotvec(rot_vec * rot_alpha)
-        T = np.eye(4)
-        T[:3, :3] = rot.as_matrix()
-        T[:3, 3] = pos
-        return T
 
     def augment(self, img_noc: np.ndarray, img_norms: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         if not self.aug_enabled:
@@ -164,9 +127,9 @@ class DsPoseGen:
         return img_noc, img_norms
 
     def gen_item(self) -> DsPoseItem:
-        rot_vec, rot_alpha = self.gen_rot_vec()
+        rot_vec, rot_alpha = gen_rot_vec()
         pos = self.gen_pos()
-        obj_m2c = self.make_transform(rot_vec, rot_alpha, pos)
+        obj_m2c = make_transform(rot_vec, rot_alpha, pos)
         objs = {
             self.obj_glob_id: {
                 'glob_id': self.obj_glob_id,
@@ -185,13 +148,11 @@ class DsPoseGen:
         img_noc_new, img_norms_new = self.augment(img_noc_new, img_norms_new)
 
         rot_vec *= rot_alpha
-        cam_f = self.cam_mat[0, 0]
-        bb_center_cam = bb_center / cam_f
         resize_factor = self.img_out_size[0] / crop_size
         pos = obj_m2c[:3, 3]
 
         item = DsPoseItem(img_noc, img_norms, img_noc_new, img_norms_new,
-                          bb_center_cam, resize_factor,
+                          self.cam_mat, bb_center, resize_factor,
                           rot_vec, pos)
         return item
 
@@ -206,6 +167,8 @@ class DsPoseGen:
                 self.task_event.set()
                 while not self.results:
                     self.result_event.wait()
+                if self.stopped:
+                    return
                 item = self.results.pop(0)
             else:
                 item = self.gen_item()
@@ -215,6 +178,14 @@ class DsPoseGen:
 
     def on_epoch_begin(self):
         self.hist.clear()
+
+    def stop(self):
+        if not self.multi_threading:
+            return
+        self.stopped = True
+        self.task_event.set()
+        self.result_event.set()
+        self.renderer_thread.join()
 
 
 def _test_ds_pose_gen():

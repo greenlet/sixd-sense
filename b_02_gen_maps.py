@@ -119,9 +119,6 @@ def read_gt(hdf5_fpath: Path) -> Tuple[np.ndarray, np.ndarray, Tuple[int, int], 
 def main(cfg: Config) -> int:
     print(cfg)
     target_ds_path = cfg.sds_root_path / cfg.target_dataset_name
-    dist_ds_path = cfg.sds_root_path / cfg.distractor_dataset_name
-    target_models_path = target_ds_path / cfg.models_subdir
-    dist_models_path = dist_ds_path / cfg.models_subdir
 
     models = load_objs(cfg.sds_root_path, cfg.target_dataset_name, cfg.distractor_dataset_name, cfg.models_subdir, load_meshes=True)
 

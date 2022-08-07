@@ -23,6 +23,8 @@ def tf_set_gpu_incremental_memory_growth():
 def tf_set_use_device(cpu: bool = True):
     if cpu:
         os.environ[CUDA_ENV_NAME] = '-1'
+        # physical_devices = tf.config.list_physical_devices('CPU')
+        # tf.config.set_visible_devices(physical_devices, 'CPU')
     else:
         os.environ[CUDA_ENV_NAME] = '0'
         tf_set_gpu_incremental_memory_growth()

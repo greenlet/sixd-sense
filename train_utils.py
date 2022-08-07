@@ -26,7 +26,7 @@ def find_latest_train_path(train_root_path: Path, prefix: str = '') -> Optional[
     return max_path
 
 
-def find_train_weights_path(weights_path: Path) -> Tuple[Optional[Path], Optional[Path]]:
+def find_train_weights_path(weights_path: Path, best: bool = True) -> Tuple[Optional[Path], Optional[Path]]:
     if weights_path.is_file():
         # <train-subdir>/weights/best/<checkpoint-files>
         return weights_path.parent.parent.parent, weights_path
@@ -36,7 +36,8 @@ def find_train_weights_path(weights_path: Path) -> Tuple[Optional[Path], Optiona
     if train_path is None and weights_path.parent.is_dir():
         train_path = find_latest_train_path(weights_path.parent, weights_path.name)
     if train_path is not None:
-        return train_path, train_path / 'weights' / 'best' / 'best.pb'
+        last_part = 'best/best.pb' if best else 'last/last.pb'
+        return train_path, train_path / 'weights' / last_part
     return None, None
 
 

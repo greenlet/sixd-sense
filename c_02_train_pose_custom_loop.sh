@@ -22,11 +22,11 @@ batch_size=4
 train_steps=2000
 val_steps=200
 
-#epochs=3
-#train_steps=5
-#val_steps=2
+epochs=3
+train_steps=5
+val_steps=2
 
-python c_02_train_pose.py \
+python c_02_train_pose_custom_loop.py \
   --sds-root-path $sds_root_path \
   --dataset-name $dataset_name \
   --models-subdir $models_subdir \

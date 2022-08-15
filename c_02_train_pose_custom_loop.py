@@ -203,10 +203,12 @@ def main(cfg: Config) -> int:
     inp, out = build_pose_layers(cfg.img_size)
     model = tf.keras.models.Model(inputs=inp, outputs=out)
 
+
+
     model.compile(
         optimizer=tf.keras.optimizers.RMSprop(learning_rate=cfg.learning_rate),
         loss=[
-            RotVecLoss(100),
+            RotVecLoss(160),
             TransLoss(),
         ],
     )
@@ -251,4 +253,7 @@ def main(cfg: Config) -> int:
 
 
 if __name__ == '__main__':
-    run_and_exit(Config, main, 'Train pose network')
+    def exception_handler(ex: BaseException) -> int:
+        raise ex
+
+    run_and_exit(Config, main, 'Train pose network', exception_handler=exception_handler)

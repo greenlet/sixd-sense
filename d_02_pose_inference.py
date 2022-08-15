@@ -95,7 +95,7 @@ def predict_on_dataset(model: tf.keras.models.Model, ds_loader: Union[DsPoseLoad
     cv2.imshow('maps', img_vis)
     cv2.moveWindow('maps', 0, 0)
     for item in ds_loader.gen():
-        ren.set_window_size((item.img_src.shape[1], item.img_src.shape[0]))
+        ren.set_window_size((item.img_noc_src.shape[1], item.img_noc_src.shape[0]))
         (img, params_in), (rot_vec, pos) = ds_item_to_numbers(item)
         img, params_in = tf.convert_to_tensor(img)[None], tf.convert_to_tensor(params_in)[None]
         img = tf_img_to_float(img)
@@ -119,7 +119,8 @@ def predict_on_dataset(model: tf.keras.models.Model, ds_loader: Union[DsPoseLoad
 
         img_vis = cv2.cvtColor(img_vis, cv2.COLOR_RGB2BGR)
         cv2.imshow('maps', img_vis)
-        cv2.imshow('src', item.img_src)
+        if item.img_src is not None:
+            cv2.imshow('src', item.img_src)
         if cv2.waitKey() in (27, ord('q')):
             break
 

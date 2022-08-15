@@ -15,10 +15,13 @@ sds_root_path=$data_path/sds
 dataset_name=itodd
 phi=0
 #weights_subdir=20220731_211130_itodd_obj_000001
-weights_subdir=20220804_215428_itodd_obj_000003
+#weights_subdir=20220804_215428_itodd_obj_000003
+#weights_subdir=20220807_221240_itodd_obj_000001
+weights_subdir=20220809_211758_itodd_obj_000001
 use_gpu=""
 bool_args="$use_gpu"
 data_source=loader
+data_source=generator
 
 python d_02_pose_inference.py $bool_args \
   --sds-root-path $sds_root_path \

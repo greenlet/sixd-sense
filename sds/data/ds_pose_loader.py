@@ -98,7 +98,9 @@ class DsPoseLoader:
         while True:
             for item in self.get_item(i):
                 self.add_to_hist(item)
+                t1 = time.time()
                 yield item
+                # print(f'item {i:06d} time: {time.time() - t1:.3f}')
             i = (i + 1) % n
 
     def on_epoch_begin(self):

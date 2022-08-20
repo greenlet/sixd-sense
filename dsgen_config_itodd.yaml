@@ -1,9 +1,9 @@
 
-sds_root_path: /home/misha/data/sds
+sds_root_path: /ws/data/sds
 target_dataset_name: itodd
 distractor_dataset_name: tless
-src_path: /home/misha/prog/sixd_sense
-cc_textures_path: /media/misha/HomeWork/data/bproc/cc_textures
+src_path: /home/mikhailburakov/prog/sds
+cc_textures_path: /ws/data/bproc/cc_textures
 output_path: null
 output_postfix: ''
 images_per_dir: 1000
@@ -20,3 +20,4 @@ generation:
     target_objects_num: 30
     distractor_objects_num: 10
     max_duplicate_objects: 3
+

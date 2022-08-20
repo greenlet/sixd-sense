@@ -16,7 +16,7 @@ from sds.model.model_pose import build_pose_layers
 from sds.model.processing import tf_img_to_float
 from sds.synth.renderer import Renderer, OutputType
 from sds.utils.tf_utils import tf_set_use_device
-from sds.utils.utils import load_objs
+from sds.utils.ds_utils import load_objs
 from train_utils import find_train_weights_path
 
 

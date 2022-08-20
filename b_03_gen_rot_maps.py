@@ -18,7 +18,8 @@ import pymesh
 from sds.synth.renderer import Renderer, OutputType
 from sds.utils import utils
 from sds.utils.common import int_to_tuple
-from sds.utils.utils import load_objs, canonical_cam_mat_from_img, make_transform, calc_ref_dist_from_camera
+from sds.utils.utils import canonical_cam_mat_from_img, make_transform, calc_ref_dist_from_camera
+from sds.utils.ds_utils import load_objs
 
 
 class Config(BaseModel):

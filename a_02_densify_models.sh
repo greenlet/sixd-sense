@@ -3,7 +3,7 @@
 code_path=$HOME/prog
 #data_path=$HOME/data
 #sds_src_path=$code_path/sixd_sense
-data_path=/data/data
+data_path=/ws/data
 sds_src_path=$code_path/sds
 
 sds_root_path=$data_path/sds

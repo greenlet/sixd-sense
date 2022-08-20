@@ -9,7 +9,8 @@ import numpy as np
 from sds.data.utils import extract_pose, resize_imgs, DsPoseItem
 from sds.synth.renderer import Renderer, OutputType
 from sds.utils.common import IntOrTuple, int_to_tuple
-from sds.utils.utils import load_objs, canonical_cam_mat_from_img, gen_rot_vec, make_transform
+from sds.utils.utils import canonical_cam_mat_from_img, gen_rot_vec, make_transform
+from sds.utils.ds_utils import load_objs
 
 
 class ConeFrustum:

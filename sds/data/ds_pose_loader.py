@@ -17,7 +17,7 @@ from sds.data.ds_index_gt import load_index_gt
 from sds.data.utils import read_gt_item, GtObj, GtItem, extract_pose, resize_imgs, DsPoseItem
 from sds.synth.renderer import Renderer, OutputType
 from sds.utils.common import IntOrTuple, int_to_tuple
-from sds.utils.utils import load_objs
+from sds.utils.ds_utils import load_objs
 
 
 def pose_mat_to_parts(T: np.ndarray) -> Tuple[float, float, float]:

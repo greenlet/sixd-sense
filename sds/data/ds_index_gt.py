@@ -6,7 +6,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from sds.data.utils import read_gt_item, glob_inst_to_glob_id
-from sds.utils.utils import load_objs
+from sds.utils.ds_utils import load_objs
 
 
 def make_index_gt(ds_path: Path, objs: Dict[str, Any], max_scenes: int = 0) -> pd.DataFrame:

@@ -22,7 +22,8 @@ from sds.model.model_pose import build_pose_layers, build_pose_layers_2d
 from sds.model.params import ScaledParams
 from sds.model.processing import tf_float_to_img, tf_img_to_float, np_img_to_float
 from sds.utils.tf_utils import tf_set_gpu_incremental_memory_growth
-from sds.utils.utils import datetime_str, gen_colors, load_objs
+from sds.utils.utils import datetime_str, gen_colors
+from sds.utils.ds_utils import load_objs
 from train_utils import build_maps_model, color_segmentation, normalize
 
 

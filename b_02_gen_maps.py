@@ -17,7 +17,7 @@ import pymesh
 
 from sds.synth.renderer import Renderer, OutputType
 from sds.utils import utils
-from sds.utils.utils import load_objs
+from sds.utils.ds_utils import load_objs
 
 
 class Config(BaseModel):

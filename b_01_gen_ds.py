@@ -6,10 +6,12 @@ import itertools
 import os
 from pathlib import Path
 import sys
+import traceback
 from typing import Any, Dict, Tuple, List, Optional, Union
 import time
 
 import h5py
+from ilock import ILock
 import numpy as np
 from pydantic_yaml import YamlModel
 
@@ -20,7 +22,7 @@ from blenderproc.python.camera import CameraUtility
 from blenderproc.python.renderer.SegMapRendererUtility import _colorize_objects_for_instance_segmentation
 from blenderproc.python.types.MeshObjectUtility import MeshObject
 from blenderproc.python.utility.BlenderUtility import get_all_blender_mesh_objects, load_image
-from blenderproc.python.utility.Utility import Utility
+from blenderproc.python.utility.Utility import Utility, UndoAfterExecution
 from blenderproc.python.writer.WriterUtility import WriterUtility
 from blenderproc.python.renderer import RendererUtility
 
@@ -55,7 +57,7 @@ def render_segmap(obj_key: str,
     if temp_dir is None:
         temp_dir = Utility.get_temporary_directory()
 
-    with Utility.UndoAfterExecution():
+    with UndoAfterExecution():
         RendererUtility._render_init()
         # the amount of samples must be one and there can not be any noise threshold
         RendererUtility.set_max_amount_of_samples(1)
@@ -120,7 +122,7 @@ def render_segmap(obj_key: str,
     return return_dict
 
 
-def write_hdf5(output_dir_path: str, output_data_dict: Dict[str, List[Union[np.ndarray, list, dict]]],
+def write_hdf5(output_dir_path: str, next_file_num: int, output_data_dict: Dict[str, List[Union[np.ndarray, list, dict]]],
                append_to_existing_output: bool = False, stereo_separate_keys: bool = False):
     """
     Saves the information provided inside of the output_data_dict into a .hdf5 container
@@ -145,18 +147,19 @@ def write_hdf5(output_dir_path: str, output_data_dict: Dict[str, List[Union[np.n
         if isinstance(data_block, list):
             amount_of_frames = max([amount_of_frames, len(data_block)])
 
-    # if append to existing output is turned on the existing folder is searched for the highest occurring
-    # index, which is then used as starting point for this run
-    if append_to_existing_output:
-        frame_offset = 0
-        # Look for hdf5 file with highest index
-        for path in os.listdir(output_dir_path):
-            if path.endswith(".hdf5"):
-                index = path[:-len(".hdf5")]
-                if index.isnumeric():
-                    frame_offset = max(frame_offset, int(index) + 1)
-    else:
-        frame_offset = 0
+    # # if append to existing output is turned on the existing folder is searched for the highest occurring
+    # # index, which is then used as starting point for this run
+    # if append_to_existing_output:
+    #     frame_offset = 0
+    #     # Look for hdf5 file with highest index
+    #     for path in os.listdir(output_dir_path):
+    #         if path.endswith(".hdf5"):
+    #             index = path[:-len(".hdf5")]
+    #             if index.isnumeric():
+    #                 frame_offset = max(frame_offset, int(index) + 1)
+    # else:
+    #     frame_offset = 0
+    frame_offset = next_file_num
 
     if amount_of_frames != bpy.context.scene.frame_end - bpy.context.scene.frame_start:
         raise Exception("The amount of images stored in the output_data_dict does not correspond with the amount"
@@ -204,6 +207,10 @@ class GenConfig(YamlModel):
     render_samples: int
     image_size: Tuple[int, int]
     scene: SceneConfig
+
+
+def scene_name_from_no(scene_no: int) -> str:
+    return f'{scene_no:06d}'
 
 
 class Config(YamlModel):
@@ -370,6 +377,68 @@ class DirsIter:
         return new_dir_path
 
 
+class DirsIterMp:
+    def __init__(self, cfg: Config):
+        self._lock = ILock(cfg.output_path.as_posix())
+        self._cfg = cfg
+        self._cfg.output_path.mkdir(parents=True, exist_ok=True)
+        self._dir_no = 0
+        self._dir_files_num = 0
+        self._next_file_no = 0
+        self._dir_files_check_needed = True
+        self._iter_fpath = self._cfg.output_path / 'iter.json'
+
+    def _read_iter_json(self):
+        if self._iter_fpath.exists():
+            try:
+                iter_json = read_json(self._iter_fpath)
+                self._dir_no = iter_json['dir_no']
+                self._dir_files_num = iter_json['dir_files_num']
+                self._next_file_no = iter_json['next_file_no']
+                self._dir_files_check_needed = False
+            except:
+                print(f'Error reading iter json from {self._iter_fpath}')
+                print(traceback.format_exc())
+                self._dir_no, self._dir_files_num, self._next_file_no = 0, 0, 0
+
+    def _write_iter_json(self):
+        iter_json = {
+            'dir_no': self._dir_no,
+            'dir_files_num': self._dir_files_num,
+            'next_file_no': self._next_file_no,
+        }
+        write_json(iter_json, self._iter_fpath)
+
+    def _iter_dir(self):
+        self._read_iter_json()
+        while True:
+            if self._dir_files_check_needed:
+                dir_name = scene_name_from_no(self._dir_no)
+                subpath = self._cfg.output_path / dir_name
+                if subpath.exists():
+                    _, _, fnames = next(os.walk(subpath))
+                    fnums = [int(fname.split('.')[0]) for fname in fnames]
+                    self._next_file_no = max(fnums, default=-1) + 1
+                    self._dir_files_num = len(fnames)
+                self._dir_files_check_needed = False
+            if self._dir_files_num < self._cfg.images_per_dir:
+                break
+            self._dir_no += 1
+            self._dir_files_num = 0
+            self._next_file_no = 0
+            self._dir_files_check_needed = True
+        self._dir_files_num += self._cfg.generation.scene.images_num
+        self._next_file_no += self._cfg.generation.scene.images_num
+        self._write_iter_json()
+
+    def next_dir(self) -> Tuple[Path, int]:
+        with self._lock:
+            self._iter_dir()
+        dir_name = scene_name_from_no(self._dir_no)
+        dir_path = self._cfg.output_path / dir_name
+        return dir_path, self._next_file_no - self._cfg.generation.scene.images_num
+
+
 def sample_add_objs(objs: List[GlobObj], max_objects: int, max_duplicates: int) -> Tuple[List[GlobObj], List[MeshObject]]:
     n_objs = len(objs)
     objs = objs.copy()
@@ -454,15 +523,16 @@ class DsGen:
         self.light_plane.replace_materials(self.light_plane_material)
         self.cc_textures = bproc.loader.load_ccmaterials(self.cfg.cc_textures_path.as_posix())
         self.scene_gen = SceneGen(cfg.generation.scene, self.target_objs, self.dist_objs)
-        self.dirs_iter = DirsIter(self.cfg)
+        self.dirs_iter = DirsIterMp(self.cfg)
         self.normals_initialized = False
 
     def sample_light(self):
-        emission_color = np.random.uniform([0.5, 0.5, 0.5, 1.0], [1.0, 1.0, 1.0, 1.0])
+        emission_color = np.random.uniform([0.7, 0.7, 0.7, 1.0], [1.0, 1.0, 1.0, 1.0])
         self.light_plane_material.make_emissive(
-            emission_strength=np.random.uniform(0.1, 0.5),
+            emission_strength=np.random.uniform(0.25, 0.5),
             emission_color=list(emission_color))
         self.light_point.set_color(np.random.uniform([0.5, 0.5, 0.5], [1, 1, 1]))
+        self.light_point.set_energy(np.random.uniform(100, 350))
         location = bproc.sampler.shell(center=[0, 0, 0], radius_min=0.5, radius_max=1.5,
                                        elevation_min=5, elevation_max=89)
         self.light_point.set_location(location)
@@ -551,9 +621,9 @@ class DsGen:
         return res
 
     def save_data(self, data: Dict[str, Any]):
-        out_path = self.dirs_iter.next_dir()
+        out_path, next_file_num = self.dirs_iter.next_dir()
         print(f'Writing result in hdf5 format to {out_path}')
-        write_hdf5(out_path.as_posix(), data, append_to_existing_output=True)
+        write_hdf5(out_path.as_posix(), next_file_num, data, append_to_existing_output=True)
 
     def gen_scene(self, i_scene: int):
         print(f'Generating scene #{i_scene:06d}')
@@ -606,7 +676,7 @@ if __name__ == '__main__':
     CFG = init()
 
     # After init() we have our sources added to sys.path, so we can import all local modules
-    from sds.utils.utils import read_yaml
+    from sds.utils.utils import read_yaml, read_json, write_json
 
     generate(CFG)
 

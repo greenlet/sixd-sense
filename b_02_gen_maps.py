@@ -45,10 +45,10 @@ class Config(BaseModel):
         required=False,
         cli=('--models-subdir',),
     )
-    output_type: OutputType = Field(
+    output_type: str = Field(
         ...,
-        description=f'Output type. {OutputType.Normals.value} - normals in camera frame scaled in order to fit (0, 1) '
-                    f'interval. {OutputType.Noc.value} - Normalized object coordinates in camera frame. Coordinates '
+        description=f'Output type. "normals" - normals in camera frame scaled in order to fit (0, 1) '
+                    f'interval. "noc" - Normalized object coordinates in camera frame. Coordinates '
                     f'are taken relatively to object frame\'s center and scaled in order to fit (0, 1)',
         required=True,
         cli=('--output-type',),
@@ -124,7 +124,14 @@ def main(cfg: Config) -> int:
 
     data_postfix = ''
     data_path = target_ds_path / f'data{data_postfix}'
-    dst_root_path = data_path.parent / f'{data_path.name}_{cfg.output_type.value}'
+    if cfg.output_type == 'normals':
+        out_type = OutputType.Normals
+    elif cfg.output_type == 'noc':
+        out_type = OutputType.Noc
+    else:
+        raise f'Unknown output type "{cfg.output_type}". "normals", "noc" values expected'
+
+    dst_root_path = data_path.parent / f'{data_path.name}_{cfg.output_type}'
     dst_root_path.mkdir(parents=True, exist_ok=True)
 
     data = list_dataset(data_path, dst_root_path, skip_if_dst_exists=not cfg.rewrite and not cfg.debug)
@@ -140,7 +147,7 @@ def main(cfg: Config) -> int:
             img, cam_mat, img_size, objs = read_gt(fpath)
             renderer.set_window_size(img_size)
 
-            colors = renderer.gen_colors(cam_mat, objs, cfg.output_type)
+            colors = renderer.gen_colors(cam_mat, objs, out_type)
             colors = cv2.cvtColor(colors, cv2.COLOR_RGB2BGR)
 
             if cfg.debug:

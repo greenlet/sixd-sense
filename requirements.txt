@@ -1,12 +1,10 @@
 # Conda packages:
 # python=3.9.9
-# tensorflow-gpu>=2.7.0
-# tensorflow-addons>=0.13.0
 
 # PIP packages:
 #tensorflow>=2.8.0
 tensorflow-addons>=0.16.1
-tensorflow_gnn>=0.2.1
+tensorflow-gnn>=0.2.1
 jupyter>=1.0.0
 pandas>=1.3.0
 matplotlib>=3.5.0
@@ -19,6 +17,7 @@ pydantic-cli>=4.2.1
 pydantic-yaml>=0.5.1
 plyfile>=0.7.4
 keras-applications>=1.0.8
+keras-preprocessing>=1.1.2
 Cython>=0.29.26
 pyopengl>=3.1.5
 pyopengl-accelerate>=3.1.5

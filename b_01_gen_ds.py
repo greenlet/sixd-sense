@@ -579,7 +579,11 @@ class DsGen:
                 print(f'Camera-objects collision (pose {cam_poses})')
 
     def render(self) -> Dict[str, Any]:
-        data = bproc.renderer.render()
+        try:
+            data = bproc.renderer.render()
+        except:
+            print(traceback.format_exc())
+            raise
         data.update(render_segmap(obj_key='full_id'))
         print('Rendered data keys:', data.keys())
         return data

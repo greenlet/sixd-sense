@@ -3,7 +3,7 @@
 code_path=$HOME/prog
 #data_path=$HOME/data
 #sds_src_path=$code_path/sixd_sense
-data_path=/data/data
+data_path=/ws/data
 sds_src_path=$code_path/sds
 
 export PYTHONPATH=$PYTHONPATH:$sds_src_path
@@ -11,26 +11,38 @@ export MESA_GL_VERSION_OVERRIDE=3.3
 
 sds_root_path=$data_path/sds
 dataset_name=itodd
-models_subdir='models'
-model_id_num=1
-#model_id_num=2
-#model_id_num=3
+obj_models_subdir='models'
+obj_id_num=1
+#obj_id_num=2
+#obj_id_num=3
+rot_head_type=conv3d
+img_size=256
+rot_grid_size=128
 train_root_path=$data_path/sds_train_pose
 learning_rate=1e-3
 epochs=200
-batch_size=4
+batch_size=40
 train_steps=2000
 val_steps=200
 
-epochs=3
-train_steps=5
-val_steps=2
+epochs=50
+batch_size=80
+train_steps=200
+val_steps=20
+
+#batch_size=4
+#epochs=3
+#train_steps=5
+#val_steps=2
 
 python c_02_train_pose_custom_loop.py \
   --sds-root-path $sds_root_path \
   --dataset-name $dataset_name \
-  --models-subdir $models_subdir \
-  --model-id-num $model_id_num \
+  --obj-models-subdir $obj_models_subdir \
+  --obj-id-num $obj_id_num \
+  --rot-head-type $rot_head_type \
+  --img-size $img_size \
+  --rot-grid-size $rot_grid_size \
   --train-root-path $train_root_path \
   --learning-rate $learning_rate \
   --epochs $epochs \

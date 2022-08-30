@@ -23,8 +23,11 @@ models_path = ds_path / 'models'
 
 colors = gen_colors()
 # dir_path = ds_path / 'data_debug/000000'
-dir_path = ds_path / 'data/000000'
-for fpath in dir_path.iterdir():
+# dir_path = ds_path / 'data/000000'
+dir_path = ds_path / 'data/000106'
+fpaths = list(dir_path.iterdir())
+fpaths.sort()
+for fpath in fpaths:
     print(fpath)
     with h5py.File(fpath.as_posix(), 'r') as f:
         img = f['colors'][...]

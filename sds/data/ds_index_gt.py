@@ -23,6 +23,8 @@ def make_index_gt(ds_path: Path, objs: Dict[str, Any], max_scenes: int = 0) -> p
         scene_paths = scene_paths[:max_scenes]
     for scene_path in tqdm(scene_paths):
         scene_name = scene_path.name
+        if not scene_path.is_dir():
+            continue
         for item_path in sorted(scene_path.iterdir()):
             gt_item = read_gt_item(item_path, load_img=False, load_segmap=False)
             row = [0] * n_cols
@@ -62,7 +64,7 @@ def load_index_gt(ds_path: Path, objs: Dict[str, Any], recalc: bool = False, max
 
 
 def _test_load_index():
-    sds_root_path = Path('/data/data/sds')
+    sds_root_path = Path('/ws/data/sds')
     target_ds_name, dist_ds_name = 'itodd', 'tless'
     max_scenes = 0
     recalc = True

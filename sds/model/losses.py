@@ -99,7 +99,7 @@ class TransLoss(tf.keras.losses.Loss):
     def __init__(self):
         super().__init__(name=self.__class__.__name__)
 
-    def call(self, y_true, y_pred):
+    def call(self, y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
         diff = y_true - y_pred
         diff = tf.reduce_sum(diff * diff, axis=-1)
         diff = tf.reduce_mean(diff)

@@ -11,7 +11,7 @@ import tensorflow as tf
 from numpy import ndarray
 from pydantic import BaseModel, Field
 from pydantic_cli import run_and_exit
-from tqdm import tqdm
+from tqdm import tqdm, trange
 
 from sds.utils.tf_utils import tf_set_gpu_incremental_memory_growth
 tf_set_gpu_incremental_memory_growth()
@@ -282,8 +282,8 @@ def main(cfg: Config) -> int:
     for epoch in range(cfg.epochs):
         callbacks.on_epoch_begin(epoch, logs=logs)
 
-        pbar = tqdm(range(cfg.train_steps))
-        for step in range(cfg.train_steps):
+        pbar = trange(cfg.train_steps, desc=f'Epoch {epoch + 1}', unit='batch')
+        for step in pbar:
             model.reset_states()
 
             callbacks.on_batch_begin(step, logs=logs)
@@ -299,13 +299,12 @@ def main(cfg: Config) -> int:
             callbacks.on_train_batch_end(step, logs=logs)
             callbacks.on_batch_end(step, logs=logs)
 
-            pbar.update(step)
             pbar.set_description(f'Train. rv_loss: {rv_loss.numpy():.3f}. '
                                  f'tr_loss: {tr_loss.numpy():.3f}. loss: {loss.numpy():.3f}')
         pbar.close()
 
-        pbar = tqdm(range(cfg.val_steps))
-        for step in range(cfg.val_steps):
+        pbar = trange(cfg.val_steps, desc=f'Epoch {epoch + 1}', unit='batch')
+        for step in pbar:
             model.reset_states()
 
             callbacks.on_batch_begin(step, logs=logs)

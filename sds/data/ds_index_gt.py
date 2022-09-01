@@ -57,7 +57,9 @@ def load_index_gt(ds_path: Path, objs: Dict[str, Any], recalc: bool = False, max
     index_fname = 'index_gt.csv'
     index_fpath = ds_path / index_fname
     if not recalc and index_fpath.exists():
-        return read_df_from_csv(index_fpath)
+        df = read_df_from_csv(index_fpath)
+        # print(df)
+        return df
     df = make_index_gt(ds_path, objs, max_scenes)
     write_df_to_csv(df, index_fpath)
     return df

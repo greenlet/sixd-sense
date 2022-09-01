@@ -35,7 +35,6 @@ def pose_mat_to_parts(T: np.ndarray) -> Tuple[float, float, float]:
 
 class DsPoseLoader:
     def __init__(self, ds_path: Path, objs: Dict[str, Any], img_size: IntOrTuple, obj_glob_id: str, hist_sz: int = 0):
-        print(self.__class__.__name__, '__init__. thread:', thr.get_ident())
         self.ds_path = ds_path
         self.objs = objs
         self.img_out_size = int_to_tuple(img_size)
@@ -108,7 +107,7 @@ class DsPoseLoader:
 
 
 def _test_ds_pose_loader():
-    sds_root_path = Path('/data/data/sds')
+    sds_root_path = Path('/ws/data/sds')
     target_ds_name, dist_ds_name = 'itodd', 'tless'
     ds_path = sds_root_path / target_ds_name
     objs = load_objs(sds_root_path, target_ds_name, dist_ds_name)

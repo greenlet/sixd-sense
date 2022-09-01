@@ -105,7 +105,7 @@ def list_paths(ds_path: Path, data_dir: str = 'data') -> DsIndex:
         noc=DsFiles(root_path=ds_path / f'{data_dir}_noc', subdirs=[], files=[]),
         norms=DsFiles(root_path=ds_path / f'{data_dir}_normals', subdirs=[], files=[]),
     )
-    for scene_path in sorted(ds_index.items.root_path.iterdir()):
+    for scene_path in sorted(p for p in ds_index.items.root_path.iterdir() if p.is_dir()):
         scene_name = scene_path.name
         scene_is_empty = True
         for item_path in sorted(scene_path.iterdir()):
@@ -144,7 +144,7 @@ def load_cache_ds_index(ds_path: Optional[Path] = None, train_ratio: float = 0.9
 
 
 def _test_list_files():
-    root_path = '/data'
+    root_path = '/ws'
     sds_path = Path(os.path.expandvars(f'{root_path}/data/sds'))
     ds_name = 'itodd'
     ds_path = sds_path / ds_name
@@ -152,9 +152,8 @@ def _test_list_files():
     print('load_cache_ds_list start')
     reload = False
     # reload = True
-    # ds_index = load_cache_ds_index(ds_path, force_reload=reload)
-    index_fpath = ds_path / 'files_index_0.90_t124814_v13868.pkl'
-    # index_fpath = ds_path / 'files_index_0.90_t57818_v6424.pkl'
+    ds_index = load_cache_ds_index(ds_path, force_reload=reload)
+    index_fpath = ds_path / 'files_index_0.90_t96120_v10680.pkl'
     print(f'Loading index from {index_fpath}')
     ds_index = load_cache_ds_index(index_fpath=index_fpath)
     print(f'load_cache_ds_list stop: {time.time() - t:.3f}')

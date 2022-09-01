@@ -26,7 +26,7 @@ train_steps=2000
 val_steps=200
 
 epochs=50
-batch_size=80
+batch_size=150
 train_steps=200
 val_steps=20
 

@@ -176,3 +176,15 @@ class DsPoseItem:
     #     return f'{self.__class__.__name__}. Source image: '
 
 
+def ds_pose_item_to_numbers(item: DsPoseItem) -> Tuple[Tuple[np.ndarray, np.ndarray], Tuple[np.ndarray, np.ndarray]]:
+    img = np.concatenate([item.img_noc_out, item.img_norms_out], axis=-1)
+    cam_f, cam_cx, cam_cy = item.cam_mat[0, 0], item.cam_mat[0, 2], item.cam_mat[1, 2]
+    bb_center_x, bb_center_y = item.bb_center
+    params_in = np.array([cam_f, cam_cx, cam_cy, bb_center_x, bb_center_y, item.resize_factor])
+    ang = np.linalg.norm(item.rot_vec)
+    rot_vec = item.rot_vec
+    if ang > np.pi:
+        rot_vec = rot_vec / ang * (ang - 2 * np.pi)
+    return (img, params_in), (rot_vec, item.pos)
+
+

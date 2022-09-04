@@ -6,6 +6,10 @@ from typing import Optional, Tuple, List, Union
 import numpy as np
 import tensorflow as tf
 
+from sds.data.ds_pose_gen import DsPoseGen
+from sds.data.ds_pose_gen_mp import DsPoseGenMp
+from sds.data.ds_pose_loader import DsPoseLoader
+from sds.data.utils import ds_pose_item_to_numbers
 from sds.model.model import bifpn_init, bifpn_layer, final_upscale
 from sds.model.params import ScaledParams
 
@@ -85,4 +89,29 @@ def normalize(a: np.ndarray, eps: float = 1e-5, inplace=False):
     am = an >= eps
     a[am] /= an[am][..., None]
     return a
+
+
+def ds_pose_preproc(ds_pose: Union[DsPoseGen, DsPoseLoader]):
+    def f():
+        for item in ds_pose.gen():
+            yield ds_pose_item_to_numbers(item)
+
+    return f
+
+
+def ds_pose_mp_preproc(ds_pose_mp: DsPoseGenMp):
+    def f():
+        while True:
+            batch = ds_pose_mp.get_batch()
+            inp, out = zip(*batch)
+            inp_img, inp_params = zip(*inp)
+            out_rv, out_tr = zip(*out)
+            inp_img = tf.stack([i for i in inp_img], axis=0)
+            inp_img = tf.cast(inp_img, tf.uint32)
+            inp_params = tf.stack([i.astype(np.float32) for i in inp_params], axis=0)
+            out_rv = tf.stack([o.astype(np.float32) for o in out_rv], axis=0)
+            out_tr = tf.stack([o.astype(np.float32) for o in out_tr], axis=0)
+            yield (inp_img, inp_params), (out_rv, out_tr)
+
+    return f
 

@@ -174,10 +174,11 @@ class MeshObj:
 
 
 class Renderer:
-    def __init__(self, models: Dict[str, Dict], win_size: Tuple[int, int] = (640, 480), title: str = 'Renderer'):
+    def __init__(self, models: Dict[str, Dict], win_size: Tuple[int, int] = (640, 480), title: str = 'Renderer', hide_window: bool = False):
         self.models = models
         self.width, self.height = win_size
         self.title = title
+        self.hide_window = hide_window
         self.cam_mat = None
 
         if not glfw.init():
@@ -186,6 +187,8 @@ class Renderer:
         if not self.window:
             raise Exception(f'Error. Cannot create window of size: {self.width}x{self.height}')
         glfw.make_context_current(self.window)
+        if self.hide_window:
+            glfw.hide_window(self.window)
         glViewport(0, 0, self.width, self.height)
         glClearColor(0, 0, 0, 0)
         glEnable(GL_DEPTH_TEST)
@@ -234,7 +237,7 @@ class Renderer:
         self.cam_mat = cam_mat
         fovy_half_tan = (self.height / 2) / self.cam_mat[1, 1]
         fovy = np.arctan(fovy_half_tan) * 2 * (180 / np.pi)
-        print(f'Fov y: {fovy:.2f}')
+        # print(f'Fov y: {fovy:.2f}')
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
         gluPerspective(fovy, self.width / self.height, 0.01, 10)

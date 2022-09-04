@@ -24,16 +24,19 @@ epochs=200
 batch_size=40
 train_steps=2000
 val_steps=200
+pose_gen_workers=20
 
 epochs=50
-batch_size=150
-train_steps=200
-val_steps=20
+batch_size=300
+train_steps=100
+val_steps=10
+pose_gen_workers=50
 
 #batch_size=4
 #epochs=3
 #train_steps=5
 #val_steps=2
+#pose_gen_workers=0
 
 python c_02_train_pose_custom_loop.py \
   --sds-root-path $sds_root_path \
@@ -48,5 +51,6 @@ python c_02_train_pose_custom_loop.py \
   --epochs $epochs \
   --batch-size $batch_size \
   --train-steps $train_steps \
-  --val-steps $val_steps
+  --val-steps $val_steps \
+  --pose-gen-workers $pose_gen_workers
 

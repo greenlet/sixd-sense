@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from pydantic_cli import run_and_exit
 from tqdm import tqdm, trange
 
+from sds.data.ds_pose_gen_mp import DsPoseGenMp
 from sds.utils.tf_utils import tf_set_gpu_incremental_memory_growth
 tf_set_gpu_incremental_memory_growth()
 
@@ -27,7 +28,7 @@ from sds.model.params import ScaledParams
 from sds.model.processing import tf_float_to_img, tf_img_to_float, np_img_to_float
 from sds.utils.utils import datetime_str, gen_colors
 from sds.utils.ds_utils import load_objs
-from train_utils import build_maps_model, color_segmentation, normalize
+from train_utils import build_maps_model, color_segmentation, normalize, ds_pose_preproc, ds_pose_mp_preproc
 
 
 class Config(BaseModel):
@@ -112,35 +113,16 @@ class Config(BaseModel):
         description='Number of validation steps per epoch',
         cli=('--val-steps',)
     )
-    n_img_vis: int = Field(
-        4,
-        description='Number of images for inference visualization on each train/val epoch',
+    pose_gen_workers: int = Field(
+        0,
+        description='Number of processes in order to parallelize online rendering for Pose dataset generation. '
+                    'If not set or set to value <= 0, rendering is a single separate thread of the main process.',
         required=False,
-        cli=('--n-img-vis',),
+        cli=('--pose-gen-workers',),
     )
 
 
-def ds_item_to_numbers(item: DsPoseItem) -> Tuple[Tuple[ndarray, ndarray], Tuple[np.ndarray, np.ndarray]]:
-    img = np.concatenate([item.img_noc_out, item.img_norms_out], axis=-1)
-    cam_f, cam_cx, cam_cy = item.cam_mat[0, 0], item.cam_mat[0, 2], item.cam_mat[1, 2]
-    bb_center_x, bb_center_y = item.bb_center
-    params_in = np.array([cam_f, cam_cx, cam_cy, bb_center_x, bb_center_y, item.resize_factor])
-    ang = np.linalg.norm(item.rot_vec)
-    rot_vec = item.rot_vec
-    if ang > np.pi:
-        rot_vec = rot_vec / ang * (ang - 2 * np.pi)
-    return (img, params_in), (rot_vec, item.pos)
-
-
-def ds_pose_preproc(ds_pose: Union[DsPoseGen, DsPoseLoader]):
-    def f():
-        for item in ds_pose.gen():
-            yield ds_item_to_numbers(item)
-
-    return f
-
-
-def ds_pose_target(nb: int):
+def create_negative_target_(nb: int):
     def f(inp: Tuple[tf.Tensor, tf.Tensor], out: Tuple[tf.Tensor, tf.Tensor]):
         img, params = inp
         img_noc = img[..., :3]
@@ -153,12 +135,34 @@ def ds_pose_target(nb: int):
             img1 = img_noc[i]
             mask1 = mask[i]
             sim.append(tf.concat([[i, i], rvec[i], [0]], 0))
-            for j in range(i + 1, nb):
+            for j in range(i + 1, min(i + 2, nb)):
                 img2 = img_noc[j]
                 mask2 = mask[j]
                 diff = tf.abs(img2 - img1) / 255.0
                 diff = tf.reduce_mean(diff[mask1 | mask2])
                 sim.append(tf.concat([[i, j], rvec[j], tf.reshape(diff, (1,))], 0))
+        img = tf_img_to_float(img)
+        return (img, params), (sim, pos)
+
+    return f
+
+
+def create_negative_target(nb: int):
+    def f(inp: Tuple[tf.Tensor, tf.Tensor], out: Tuple[tf.Tensor, tf.Tensor]):
+        img, params = inp
+        img_noc = img[..., :3]
+        rvec, pos = out
+        # Batch size
+        sim = []
+        mask = tf.greater(tf.reduce_max(img_noc, axis=-1), 0)
+        img_noc = tf.cast(img_noc, tf.float32)
+        diff = tf.abs(img_noc[1:] - img_noc[:-1]) / 255.0
+        m = mask[:-1] | mask[1:]
+        for i in range(nb):
+            sim.append(tf.concat([[i, i], rvec[i], [0]], 0))
+        for i in range(nb - 1):
+                d = tf.reduce_mean(diff[i][mask[i] | mask[i + 1]])
+                sim.append(tf.concat([[i, i + 1], rvec[i + 1], tf.reshape(d, (1,))], 0))
         img = tf_img_to_float(img)
         return (img, params), (sim, pos)
 
@@ -180,19 +184,43 @@ def build_ds(ds_loader: Union[DsPoseGen, DsPoseLoader], batch_size: int) -> tf.d
     ds = tf.data.Dataset \
         .from_generator(ds_pose_preproc(ds_loader), output_signature=out_sig) \
         .batch(batch_size) \
-        .map(ds_pose_target(batch_size)) \
+        .map(create_negative_target(batch_size)) \
+        .prefetch(tf.data.AUTOTUNE)
+    return ds
+
+
+def build_ds_mp(ds_pose_mp: DsPoseGenMp):
+    out_sig = (
+        (
+            tf.TensorSpec(shape=(ds_pose_mp.batch_size, *ds_pose_mp.img_out_size, 6), dtype=tf.uint8),
+            tf.TensorSpec(shape=(ds_pose_mp.batch_size, 6,), dtype=tf.float32),
+        ),
+        (
+            tf.TensorSpec(shape=(ds_pose_mp.batch_size, 3,), dtype=tf.float32),
+            tf.TensorSpec(shape=(ds_pose_mp.batch_size, 3,), dtype=tf.float32),
+        ),
+    )
+    ds = tf.data.Dataset \
+        .from_generator(ds_pose_mp_preproc(ds_pose_mp), output_signature=out_sig) \
+        .map(create_negative_target(ds_pose_mp.batch_size)) \
         .prefetch(tf.data.AUTOTUNE)
     return ds
 
 
 def build_datasets(cfg: Config, objs: Dict, obj_glob_id: str) -> Tuple[
-        DsPoseGen, DsPoseLoader, tf.data.Dataset, tf.data.Dataset]:
+        Union[DsPoseGen, DsPoseGenMp], DsPoseLoader, tf.data.Dataset, tf.data.Dataset]:
     ds_path = cfg.sds_root_path / cfg.dataset_name
-    ds_pose_train = DsPoseGen(objs, obj_glob_id, cfg.img_size, aug_enabled=True, hist_sz=cfg.n_img_vis,
-                              multi_threading=True)
-    ds_pose_val = DsPoseLoader(ds_path, objs, cfg.img_size, obj_glob_id, hist_sz=cfg.n_img_vis)
-    ds_train = build_ds(ds_pose_train, cfg.batch_size)
+    render_base_size = (1280, 1024)
+    if cfg.pose_gen_workers > 0:
+        ds_pose_train = DsPoseGenMp(objs, obj_glob_id, cfg.img_size, render_base_size, aug_enabled=True, batch_size=cfg.batch_size, n_workers=cfg.pose_gen_workers)
+        ds_train = build_ds_mp(ds_pose_train)
+    else:
+        ds_pose_train = DsPoseGen(objs, obj_glob_id, cfg.img_size, render_base_size, aug_enabled=True, multi_threading=True)
+        ds_train = build_ds(ds_pose_train, cfg.batch_size)
+
+    ds_pose_val = DsPoseLoader(ds_path, objs, cfg.img_size, obj_glob_id)
     ds_val = build_ds(ds_pose_val, cfg.batch_size)
+
     return ds_pose_train, ds_pose_val, ds_train, ds_val
 
 
@@ -222,7 +250,6 @@ def main(cfg: Config) -> int:
     rot_head_type = RotHeadType(cfg.rot_head_type)
     assert rot_head_type == RotHeadType.Conv3d, f'{RotHeadType.Conv2d} is not supported yet'
 
-    rot_head_type = RotHeadType.Conv2d
     inp, out = build_pose_layers_new(rot_head_type, cfg.img_size)
     model = tf.keras.models.Model(inputs=inp, outputs=out)
 
@@ -255,7 +282,7 @@ def main(cfg: Config) -> int:
     ]
     callbacks = tf.keras.callbacks.CallbackList(callbacks_, add_history=True, model=model)
 
-    @tf.function
+    # @tf.function
     def train_step():
         x_train, (rv_true, tr_true) = next(ds_train_iter)
         with tf.GradientTape() as tape:
@@ -267,7 +294,7 @@ def main(cfg: Config) -> int:
         optimizer.apply_gradients(zip(grads, model.trainable_weights))
         return rv_loss, tr_loss, loss
 
-    @tf.function
+    # @tf.function
     def val_step():
         x_val, (rv_true, tr_true) = next(ds_val_iter)
         rot_pred, tr_pred = model(x_val, training=False)
@@ -282,7 +309,7 @@ def main(cfg: Config) -> int:
     for epoch in range(cfg.epochs):
         callbacks.on_epoch_begin(epoch, logs=logs)
 
-        pbar = trange(cfg.train_steps, desc=f'Epoch {epoch + 1}', unit='batch')
+        pbar = trange(cfg.train_steps, desc=f'Epoch {epoch + 1}. Train', unit='batch')
         for step in pbar:
             model.reset_states()
 
@@ -299,11 +326,11 @@ def main(cfg: Config) -> int:
             callbacks.on_train_batch_end(step, logs=logs)
             callbacks.on_batch_end(step, logs=logs)
 
-            pbar.set_description(f'Train. rv_loss: {rv_loss.numpy():.3f}. '
+            pbar.set_postfix_str(f'rv_loss: {rv_loss.numpy():.3f}. '
                                  f'tr_loss: {tr_loss.numpy():.3f}. loss: {loss.numpy():.3f}')
         pbar.close()
 
-        pbar = trange(cfg.val_steps, desc=f'Epoch {epoch + 1}', unit='batch')
+        pbar = trange(cfg.val_steps, desc=f'Epoch {epoch + 1}. Val', unit='batch')
         for step in pbar:
             model.reset_states()
 
@@ -321,7 +348,7 @@ def main(cfg: Config) -> int:
             callbacks.on_batch_end(step, logs=logs)
 
             pbar.update(step)
-            pbar.set_description(f'Val. rv_loss: {rv_loss.numpy():.3f}. '
+            pbar.set_postfix_str(f'rv_loss: {rv_loss.numpy():.3f}. '
                                  f'tr_loss: {tr_loss.numpy():.3f}. loss: {loss.numpy():.3f}')
         pbar.close()
         callbacks.on_epoch_end(epoch, logs=logs)

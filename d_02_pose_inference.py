@@ -9,10 +9,10 @@ from pydantic import BaseModel, Field
 from pydantic_cli import run_and_exit
 from scipy.spatial.transform import Rotation as R
 
-from c_02_train_pose import ds_item_to_numbers
 from sds.data.ds_pose_gen import DsPoseGen
 from sds.data.ds_pose_loader import DsPoseLoader
-from sds.model.model_pose import build_pose_layers
+from sds.data.utils import ds_pose_item_to_numbers
+from sds.model.model_pose import build_pose_layers, build_pose_layers, RotHeadType
 from sds.model.processing import tf_img_to_float
 from sds.synth.renderer import Renderer, OutputType
 from sds.utils.tf_utils import tf_set_use_device
@@ -96,7 +96,7 @@ def predict_on_dataset(model: tf.keras.models.Model, ds_loader: Union[DsPoseLoad
     cv2.moveWindow('maps', 0, 0)
     for item in ds_loader.gen():
         ren.set_window_size((item.img_noc_src.shape[1], item.img_noc_src.shape[0]))
-        (img, params_in), (rot_vec, pos) = ds_item_to_numbers(item)
+        (img, params_in), (rot_vec, pos) = ds_pose_item_to_numbers(item)
         img, params_in = tf.convert_to_tensor(img)[None], tf.convert_to_tensor(params_in)[None]
         img = tf_img_to_float(img)
         rv_prob_pred, pos_pred = model((img, params_in))
@@ -129,13 +129,16 @@ def main(cfg: Config) -> int:
     print(cfg)
     ds_path = cfg.sds_root_path / cfg.dataset_name
 
-    best = True
-    train_path, weights_path = find_train_weights_path(cfg.weights_path, best=best)
-    if train_path is None or not train_path.exists():
-        print(f'Cannot find weights in {cfg.weights_path}')
-        return 1
+    # best = True
+    # train_path, weights_path = find_train_weights_path(cfg.weights_path, best=best)
+    # if train_path is None or not train_path.exists():
+    #     print(f'Cannot find weights in {cfg.weights_path}')
+    #     return 1
+    #
+    # obj_glob_id = '_'.join(weights_path.parent.parent.parent.name.split('_')[2:])
 
-    obj_glob_id = '_'.join(weights_path.parent.parent.parent.name.split('_')[2:])
+    weights_path = cfg.weights_path / 'weights/best/best.pb'
+    obj_glob_id = cfg.weights_path.name.split('--')[-2][4:]
 
     tf_set_use_device(cpu=not cfg.use_gpu)
 
@@ -143,7 +146,7 @@ def main(cfg: Config) -> int:
     objs = {obj_glob_id: objs[obj_glob_id]}
 
     print('Building model')
-    inp, out = build_pose_layers(cfg.img_size)
+    inp, out = build_pose_layers(RotHeadType.Conv3d, cfg.img_size)
     model = tf.keras.models.Model(inputs=inp, outputs=out)
     print(f'Loading model from {weights_path}')
     model.load_weights(weights_path.as_posix())

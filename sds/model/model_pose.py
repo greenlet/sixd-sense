@@ -41,148 +41,6 @@ def block_up(x: tf.Tensor, strides: IntOrTuple, ch_in: int, ch_out: int = 0, ker
     return x, ch_out
 
 
-# TODO: Generalize to various input sizes
-def build_pose_layers_1(input_size: int = 128, input_channels: int = 6, inp_pose_size: int = 6) -> Tuple[Tuple[tf.Tensor, tf.Tensor], Tuple[tf.Tensor, tf.Tensor]]:
-    assert input_size == 128
-    input_shape = input_size, input_size, input_channels
-    inp = tf.keras.Input(input_shape)
-    inp_pose = tf.keras.Input((inp_pose_size,), dtype=tf.float32)
-    x, ch = inp, input_channels # 128, 128, 6
-    x, ch = block_down(x, 2, ch, 16) # 64, 64, 16
-    x, ch = block_down(x, 2, ch, ch * 2) # 32, 32, 32
-    x, ch = block_down(x, 2, ch, ch * 2, 3) # 16, 16, 64
-    x, ch = block_down(x, 2, ch, ch * 2, 3) # 8, 8, 128
-    x, ch = block_down(x, 2, ch, ch * 2, 3) # 4, 4, 256
-    x, ch = block_down(x, 2, ch, ch * 2, 3) # 2, 2, 512
-    x, ch = layers.Conv2D(ch * 2, 2, activation='relu')(x), ch * 2 # 1, 1, 1024
-
-    x_pos = tf.reshape(x, (-1, ch))
-
-    x = tf.expand_dims(x, -2)
-    x, ch = layers.Conv3DTranspose(256, 2, 2, activation='relu')(x), 256 # 2, 2, 256
-    x, ch = layers.Conv3DTranspose(ch // 4, 2, 2, activation='relu')(x), ch // 4 # 4^3, 64
-    x, ch = layers.Conv3DTranspose(ch // 2, 2, 2, activation='relu')(x), ch // 2 # 8^3, 32
-    x, ch = layers.Conv3DTranspose(ch // 2, 2, 2, activation='relu')(x), ch // 2 # 16^3, 16
-    x, ch = layers.Conv3DTranspose(ch // 2, 2, 2, activation='relu')(x), ch // 2 # 32^3, 8
-    x, ch = layers.Conv3DTranspose(ch // 2, 2, 2, activation='relu')(x), ch // 2 # 64^3, 4
-    x, ch = layers.Conv3DTranspose(ch // 2, 2, 2, activation='relu')(x), ch // 2 # 128^3, 2
-    x, ch = layers.Conv3DTranspose(ch // 2, 2, 2)(x), ch // 2 # 256^3, 1
-    x = tf.reshape(x, (-1, 256, 256, 256))
-    x = activations.sigmoid(x)
-    out_rot = x
-
-    x_pos = layers.Concatenate(axis=-1)([x_pos, inp_pose]) # 1027
-    x_pos = layers.Dense(512, activation='relu')(x_pos)
-    x_pos = layers.Dense(256, activation='relu')(x_pos)
-    x_pos = layers.Dense(3, activation='relu')(x_pos)
-    out_pos = x_pos
-
-    return (inp, inp_pose), (out_rot, out_pos)
-
-
-def build_pose_layers_2(input_size: int = 256, input_channels: int = 6, inp_pose_size: int = 6) -> Tuple[Tuple[tf.Tensor, tf.Tensor], Tuple[tf.Tensor, tf.Tensor]]:
-    assert input_size == 256
-    input_shape = input_size, input_size, input_channels
-    inp = tf.keras.Input(input_shape)
-    inp_pose = tf.keras.Input((inp_pose_size,), dtype=tf.float32)
-    x, ch = inp, input_channels # 256, 256, 6
-    x, ch = block_down(x, 2, ch, 8) # 128, 128, 8
-    x, ch = block_down(x, 2, ch, ch * 2) # 64, 64, 16
-    x, ch = block_down(x, 2, ch, ch * 2) # 32, 32, 32
-    x, ch = block_down(x, 2, ch, ch * 2, 3) # 16, 16, 64
-    x, ch = block_down(x, 2, ch, ch * 2, 3) # 8, 8, 128
-    x, ch = block_down(x, 2, ch, ch * 2, 3) # 4, 4, 256
-    x, ch = block_down(x, 2, ch, ch * 2, 3) # 2, 2, 512
-    x, ch = layers.Conv2D(ch * 2, 2, activation='relu')(x), ch * 2 # 1, 1, 1024
-
-    x_pos = tf.reshape(x, (-1, ch))
-
-    x = tf.expand_dims(x, -2)
-    x, ch = layers.Conv3DTranspose(256, 2, 2, activation='relu')(x), 256 # 2^3, 256
-    x, ch = layers.Conv3DTranspose(ch // 4, 2, 2, activation='relu')(x), ch // 4 # 4^3, 64
-    x, ch = layers.Conv3DTranspose(ch // 4, 2, 2, activation='relu')(x), ch // 2 # 8^3, 16
-    x, ch = layers.Conv3DTranspose(ch // 4, 4, 4, activation='relu')(x), ch // 2 # 32^3, 4
-    x, ch = layers.Conv3DTranspose(ch // 4, 4, 4, activation='sigmoid')(x), ch // 2 # 128^3, 1
-    out_rot = tf.reshape(x, (-1, 128, 128, 128))
-
-    x_pos = layers.Concatenate(axis=-1)([x_pos, inp_pose]) # 1027
-    x_pos = layers.Dense(512, activation='relu')(x_pos)
-    x_pos = layers.Dense(256, activation='relu')(x_pos)
-    x_pos = layers.Dense(3)(x_pos)
-    out_pos = x_pos
-
-    return (inp, inp_pose), (out_rot, out_pos)
-
-
-def build_pose_layers(input_size: int = 256, input_channels: int = 6, inp_pose_size: int = 6) -> Tuple[Tuple[tf.Tensor, tf.Tensor], Tuple[tf.Tensor, tf.Tensor]]:
-    assert input_size == 256
-    input_shape = input_size, input_size, input_channels
-    inp = tf.keras.Input(input_shape)
-    inp_pose = tf.keras.Input((inp_pose_size,), dtype=tf.float32)
-    x, ch = inp, input_channels # 256, 256, 6
-    x, ch = block_down(x, 2, ch, 8) # 128, 128, 8
-    x, ch = block_down(x, 2, ch, ch * 2) # 64, 64, 16
-    x, ch = block_down(x, 2, ch, ch * 2) # 32, 32, 32
-    x, ch = block_down(x, 2, ch, ch * 2) # 16, 16, 64
-    x, ch = block_down(x, 2, ch, ch * 2, 3) # 8, 8, 128
-    x, ch = block_down(x, 2, ch, ch * 2, 3) # 4, 4, 256
-    x, ch = layers.Conv2D(1000, 4, activation='relu')(x), 1000
-    x = layers.Dense(1000)(x)
-    print('!!!', x)
-    x_pos = tf.reshape(x, (-1, ch))
-
-    x = activations.relu(x)
-    x = layers.Dense(125000, activation='relu')(x)
-    x = tf.reshape(x, (-1, 50, 50, 50, 1))
-    x = layers.Conv3DTranspose(1, 8, 2, 'same', activation='sigmoid')(x)
-    print('!!!', x)
-    x = tf.reshape(x, (-1, 100, 100, 100))
-    out_rot = x
-
-    x_pos = layers.Concatenate(axis=-1)([x_pos, inp_pose]) # 1006
-    x_pos = layers.Dense(512, activation='relu')(x_pos)
-    x_pos = layers.Dense(256, activation='relu')(x_pos)
-    x_pos = layers.Dense(3)(x_pos)
-    out_pos = x_pos
-
-    return (inp, inp_pose), (out_rot, out_pos)
-
-
-def build_pose_layers_(input_size: int = 256, input_channels: int = 6, inp_pose_size: int = 6) -> Tuple[Tuple[tf.Tensor, tf.Tensor], Tuple[tf.Tensor, tf.Tensor]]:
-    assert input_size == 256
-    input_shape = input_size, input_size, input_channels
-    inp = tf.keras.Input(input_shape)
-    inp_pose = tf.keras.Input((inp_pose_size,), dtype=tf.float32)
-    x, ch = inp, input_channels # 256, 256, 6
-    x, ch = block_down(x, 2, ch, 8) # 128, 128, 8
-    x, ch = block_down(x, 2, ch, ch * 2) # 64, 64, 16
-    x, ch = block_down(x, 2, ch, ch * 2) # 32, 32, 32
-    x, ch = block_down(x, 2, ch, ch * 2) # 16, 16, 64
-    x, ch = block_down(x, 2, ch, ch * 2, 3) # 8, 8, 128
-    x, ch = block_down(x, 2, ch, ch * 2, 3) # 4, 4, 256
-    x, ch = layers.Conv2D(1000, 4, activation='relu')(x), 1000
-    x = layers.Dense(1000)(x)
-    print('!!!', x)
-    x_pos = tf.reshape(x, (-1, ch))
-
-    x = activations.relu(x)
-    x = tf.reshape(x, (-1, 10, 10, 10, 1))
-    x, ch = layers.Conv3DTranspose(1, 4, 2, padding='same', activation='relu')(x), 1 # 20^3, 1
-    x, ch = layers.Conv3DTranspose(1, 4, 2, padding='same', activation='relu')(x), 1 # 40^3, 1
-    x, ch = layers.Conv3DTranspose(1, 4, 2, padding='same', activation='relu')(x), 1 # 80^3, 1
-    x, ch = layers.Conv3DTranspose(1, 4, 2, padding='same', activation='sigmoid')(x), 1 # 160^3, 1
-    print('!!!', x)
-    out_rot = tf.reshape(x, (-1, 160, 160, 160))
-
-    x_pos = layers.Concatenate(axis=-1)([x_pos, inp_pose]) # 1006
-    x_pos = layers.Dense(512, activation='relu')(x_pos)
-    x_pos = layers.Dense(256, activation='relu')(x_pos)
-    x_pos = layers.Dense(3)(x_pos)
-    out_pos = x_pos
-
-    return (inp, inp_pose), (out_rot, out_pos)
-
-
 def is_pow_2(n: int) -> bool:
     while n > 1:
         if n % 2: return False
@@ -224,16 +82,18 @@ def build_rot_head_3d(x: tf.Tensor, ch_in: int, out_size: int) -> tf.Tensor:
             nb_in -= bsub
         act = None if nb_out == nbits_out - 1 else 'relu'
         ker_sz, stride = 2, 2
-        # if nb_out > 3:
-        #     ker_sz, stride = 4, 4
-        x = layers.Conv3DTranspose(ch, ker_sz, stride, activation=act)(x)
+        if nb_out >= 4:
+            ker_sz = 7
+        elif nb_out >= 2:
+            ker_sz = 5
+        x = layers.Conv3DTranspose(ch, ker_sz, stride, activation=act, padding='same')(x)
         print(x)
 
     x = tf.reshape(x, (-1, out_size, out_size, out_size))
     return x
 
 
-def build_pose_layers_new(head_type: RotHeadType, inp_img_size: int = 256, out_cube_size: int = 128, inp_channels: int = 6, inp_pose_size: int = 6) -> Tuple[
+def build_pose_layers(head_type: RotHeadType, inp_img_size: int = 256, out_cube_size: int = 128, inp_channels: int = 6, inp_pose_size: int = 6) -> Tuple[
         Tuple[tf.Tensor, tf.Tensor], Tuple[tf.Tensor, tf.Tensor]]:
     assert is_pow_2(inp_img_size), f'input_size = {inp_img_size} is not power of 2'
     assert is_pow_2(out_cube_size), f'output_size = {out_cube_size} is not power of 2'
@@ -304,7 +164,7 @@ if __name__ == '__main__':
     head_type, in_sz, out_sz = RotHeadType.Conv3d, 128, 128
     head_type, in_sz, out_sz = RotHeadType.Conv3d, 256, 128
     # head_type, in_sz, out_sz = RotHeadType.Conv3d, 256, 256
-    inp, out = build_pose_layers_new(head_type, in_sz, out_cube_size=out_sz)
+    inp, out = build_pose_layers(head_type, in_sz, out_cube_size=out_sz)
     print('out:', out)
     model = models.Model(inputs=inp, outputs=out)
     print(model.summary())

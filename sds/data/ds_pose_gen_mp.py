@@ -61,7 +61,7 @@ class DsPoseGenMp:
         objs = {obj_glob_id: objs[obj_glob_id]}
         self.img_out_size = int_to_tuple(img_out_size)
         self.batch_size = batch_size
-        self.q_data = mpr.Queue(batch_size * 3)
+        self.q_data = mpr.Queue(batch_size * 2)
         procs: List[Tuple[mpr.Process, mpr.Queue]] = []
         for i in range(n_workers):
             q_cmd = mpr.Queue(1)

@@ -3,7 +3,7 @@
 code_path=$HOME/prog
 #data_path=$HOME/data
 #sds_src_path=$code_path/sixd_sense
-data_path=/data/data
+data_path=/ws/data
 sds_src_path=$code_path/sds
 train_root_path=$data_path/sds_train_pose
 
@@ -17,11 +17,11 @@ phi=0
 #weights_subdir=20220731_211130_itodd_obj_000001
 #weights_subdir=20220804_215428_itodd_obj_000003
 #weights_subdir=20220807_221240_itodd_obj_000001
-weights_subdir=20220809_211758_itodd_obj_000001
+weights_subdir="ds_itodd--head_conv3d--imgsz_256--rotsz_128--oid_itodd_obj_000001--20220904_183324"
 use_gpu=""
 bool_args="$use_gpu"
 data_source=loader
-data_source=generator
+#data_source=generator
 
 python d_02_pose_inference.py $bool_args \
   --sds-root-path $sds_root_path \

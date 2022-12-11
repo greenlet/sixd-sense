@@ -13,7 +13,7 @@ from sds.data.ds_pose_gen import DsPoseGen
 from sds.data.ds_pose_loader import DsPoseLoader
 from sds.data.utils import ds_pose_item_to_numbers
 from sds.model.model_pose import build_pose_layers, build_pose_layers, RotHeadType
-from sds.model.processing import tf_img_to_float
+from sds.model.utils import tf_img_to_float
 from sds.synth.renderer import Renderer, OutputType
 from sds.utils.tf_utils import tf_set_use_device
 from sds.utils.ds_utils import load_objs

@@ -1,4 +1,5 @@
 import multiprocessing as mpr
+import os.path
 import queue
 import sys
 import time
@@ -14,8 +15,7 @@ import numpy as np
 
 from sds.data.utils import extract_pose, resize_imgs, DsPoseItem
 from sds.synth.renderer import Renderer, OutputType
-from sds.utils.common import IntOrTuple, int_to_tuple
-from sds.utils.utils import canonical_cam_mat_from_img, gen_rot_vec, make_transform
+from sds.utils.utils import canonical_cam_mat_from_img, gen_rot_vec, make_transform, IntOrTuple, int_to_tuple
 from sds.utils.ds_utils import load_objs
 
 
@@ -198,8 +198,10 @@ class DsPoseGen:
 
 
 def _test_ds_pose_gen():
+    data_root_path = Path(os.path.expandvars('$HOME/data/sds'))
+    # data_root_path = Path(os.path.expandvars('/ws/data/sds'))
     ds_name = 'itodd'
-    ds_path = Path('/ws/data/sds') / ds_name
+    ds_path = data_root_path / ds_name
     objs = load_objs(ds_path.parent, ds_name, load_meshes=True)
     # img_size = 128
     img_size = 400
@@ -207,7 +209,7 @@ def _test_ds_pose_gen():
     num_to_obj_id = {obj['id_num']: obj_id for obj_id, obj in objs.items()}
     print(num_to_obj_id)
     obj_id = num_to_obj_id[obj_num]
-    dsgen = DsPoseGen(objs, obj_id, img_size, aug_enabled=True)
+    dsgen = DsPoseGen(objs, obj_id, img_size, aug_enabled=True, multi_threading=False)
     cv2.namedWindow('pose')
     cv2.moveWindow('pose', 200, 100)
     while True:

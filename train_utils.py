@@ -94,23 +94,28 @@ def normalize(a: np.ndarray, eps: float = 1e-5, inplace=False):
 def ds_pose_preproc(ds_pose: Union[DsPoseGen, DsPoseLoader]):
     def f():
         for item in ds_pose.gen():
-            yield ds_pose_item_to_numbers(item)
+            # yield ds_pose_item_to_numbers(item)
+            inp, out = ds_pose_item_to_numbers(item)
+            inp = tf.convert_to_tensor(inp[0], tf.uint8), tf.convert_to_tensor(inp[1], tf.float32)
+            out = tf.convert_to_tensor(out[0], tf.float32), tf.convert_to_tensor(out[1], tf.float32)
+            yield inp, out
 
     return f
 
 
 def ds_pose_mp_preproc(ds_pose_mp: DsPoseGenMp):
     def f():
-        while True:
+        while not ds_pose_mp.stopped:
             batch = ds_pose_mp.get_batch()
             inp, out = zip(*batch)
             inp_img, inp_params = zip(*inp)
             out_rv, out_tr = zip(*out)
             inp_img = tf.stack([i for i in inp_img], axis=0)
-            inp_img = tf.cast(inp_img, tf.uint32)
-            inp_params = tf.stack([i.astype(np.float32) for i in inp_params], axis=0)
-            out_rv = tf.stack([o.astype(np.float32) for o in out_rv], axis=0)
-            out_tr = tf.stack([o.astype(np.float32) for o in out_tr], axis=0)
+            inp_params = tf.stack([i for i in inp_params], axis=0)
+            out_rv = tf.stack([o for o in out_rv], axis=0)
+            out_tr = tf.stack([o for o in out_tr], axis=0)
+            inp_img, inp_params = tf.cast(inp_img, tf.uint8), tf.cast(inp_params, tf.float32)
+            out_rv, out_tr = tf.cast(out_rv, tf.float32), tf.cast(out_tr, tf.float32)
             yield (inp_img, inp_params), (out_rv, out_tr)
 
     return f

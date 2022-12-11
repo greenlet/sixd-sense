@@ -1,28 +1,15 @@
-import collections
-import dataclasses as dcls
-import functools
-import math
-import os
-import string
-from typing import Tuple, List, Dict, Any, Optional, Callable
+from typing import List, Any
 
-from keras_applications.imagenet_utils import _obtain_input_shape
 import tensorflow as tf
 import tensorflow_addons as tfa
-import numpy as np
 
 from sds.model.params import ScaledParams
+from sds.model.utils import prefixer
 from sds.utils.utils import compose
 
 
 MOMENTUM = 0.997
 EPSILON = 1e-4
-
-
-def prefixer(prefix: str = ''):
-    if not prefix:
-        return lambda name: name
-    return lambda name: f'{prefix}/{name}'
 
 
 def bifpn_init(feature_maps: List[Any], num_channels: int, name: str) -> List[Any]:

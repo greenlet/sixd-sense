@@ -24,6 +24,7 @@ from sds.data.ds_loader import DsLoader
 from sds.data.utils import DsPoseItem
 from sds.model.losses import MseNZLoss, CosNZLoss, RotVecLoss, TransLoss
 from sds.model.model_pose import build_pose_layers, RotHeadType, ROT_HEAD_TYPE_VALUES
+from sds.model.model_pose_graph import build_hybrid_layers
 from sds.model.params import ScaledParams
 from sds.model.utils import tf_img_to_float, tf_float_to_img, np_img_to_float
 from sds.utils.utils import datetime_str, gen_colors
@@ -58,25 +59,25 @@ class Config(BaseModel):
         required=True,
         cli=('--obj-id-num',),
     )
-    rot_head_type: str = Field(
-        ...,
-        description=f'Model architecture type. Can have values: {", ".join(ROT_HEAD_TYPE_VALUES)}',
-        required=True,
-        cli=('--rot-head-type',)
-    )
     img_size: int = Field(
         256,
         description='Training input image size',
         required=False,
         cli=('--img-size',),
     )
-    rot_grid_size: int = Field(
-        128,
-        description=f'Rotation parameters discretization number. For {RotHeadType.Conv2d} '
-                    f'head architecture it is angle space discretization. For {RotHeadType.Conv3d} '
-                    f'it is rotation vector discretization.',
+    graph_pts: int = Field(
+        1000,
+        description=f'Number of rotation vectors sampled uniformly on sphere.',
         required=False,
-        cli=('--rot-grid-size',),
+        cli=('--graph-pts',),
+    )
+    graph_levels: int = Field(
+        100,
+        description=f'Number of rotation angles sampled uniformly from 0 to 360). '
+                    f'i.e. let STEP = 360 / (LEVELS + 1), then angles will be: 1 * STEP, 2 * STEP, '
+                    f'... LEVELS * STEP. 0 rotation included by default.',
+        required=False,
+        cli=('--graph-levels',),
     )
     train_root_path: Path = Field(
         ...,
@@ -246,10 +247,7 @@ def main(cfg: Config) -> int:
     params_out_path = out_path / 'params'
     params_out_path.mkdir(parents=True, exist_ok=True)
 
-    rot_head_type = RotHeadType(cfg.rot_head_type)
-    assert rot_head_type == RotHeadType.Conv3d, f'{RotHeadType.Conv2d} is not supported yet'
-
-    inp, out = build_pose_layers(rot_head_type, cfg.img_size)
+    inp, out = build_hybrid_layers(cfg.batch_size, cfg.img_size, n_graph_pts=cfg.graph_pts, n_graph_levels=cfg.graph_levels)
     model = tf.keras.models.Model(inputs=inp, outputs=out)
 
     optimizer = tf.keras.optimizers.RMSprop(learning_rate=cfg.learning_rate)

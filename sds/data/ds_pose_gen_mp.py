@@ -1,5 +1,7 @@
 import multiprocessing as mpr
+import os.path
 import queue
+import signal
 import sys
 import time
 from enum import Enum
@@ -15,8 +17,7 @@ import numpy as np
 from sds.data.ds_pose_gen import DsPoseGen
 from sds.data.utils import extract_pose, resize_imgs, DsPoseItem, ds_pose_item_to_numbers
 from sds.synth.renderer import Renderer, OutputType
-from sds.utils.common import IntOrTuple, int_to_tuple
-from sds.utils.utils import canonical_cam_mat_from_img, gen_rot_vec, make_transform
+from sds.utils.utils import canonical_cam_mat_from_img, gen_rot_vec, make_transform, IntOrTuple, int_to_tuple
 from sds.utils.ds_utils import load_objs
 
 
@@ -71,9 +72,10 @@ class DsPoseGenMp:
         self.procs = procs
         self.buf = []
         self.batch_size = batch_size
+        self.stopped = False
 
     def get_batch(self):
-        while len(self.buf) < self.batch_size:
+        while len(self.buf) < self.batch_size and not self.stopped:
             item, ret = queue_pop(self.q_data)
             if ret:
                 self.buf.append(item)
@@ -81,11 +83,12 @@ class DsPoseGenMp:
         return res
 
     def stop(self):
+        self.stopped = True
         for proc, q_cmd in self.procs:
-            # print('Proc:', proc.name, 'stop')
+            print('Proc:', proc.name, 'stop')
             queue_push(q_cmd, 'stop')
         for proc, q_cmd in self.procs:
-            # print('Proc:', proc.name, 'wait')
+            print('Proc:', proc.name, 'wait')
             proc.join()
             q_cmd.close()
         self.q_data.close()
@@ -93,16 +96,25 @@ class DsPoseGenMp:
 
 def _test_ds_pose_gen_mp():
     ds_name = 'itodd'
-    ds_path = Path('/ws/data/sds') / ds_name
+    # ds_path = Path('/ws/data/sds') / ds_name
+    ds_path = Path(os.path.expandvars('$HOME/data/sds')) / ds_name
     objs = load_objs(ds_path.parent, ds_name, load_meshes=True)
     # img_size = 128
     img_size = 400
     obj_num = 1
+    batch_size, num_workers = 500, 50
+    batch_size, num_workers = 10, 10
     num_to_obj_id = {obj['id_num']: obj_id for obj_id, obj in objs.items()}
     print(num_to_obj_id)
     obj_id = num_to_obj_id[obj_num]
-    dsgen = DsPoseGenMp(objs, obj_id, img_size, (1280, 1024), True, 500, 50)
-    while True:
+    dsgen = DsPoseGenMp(objs, obj_id, img_size, (1280, 1024), True, batch_size, num_workers)
+
+    stop = np.array((False,), dtype=bool)
+    def on_ctrl_c(signal, frame):
+        stop[0] = True
+    signal.signal(signal.SIGINT, on_ctrl_c)
+
+    while not stop[0]:
         t = time.time()
         batch = dsgen.get_batch()
         print(f'Batch size: {len(batch)}. Time: {time.time() - t:.3f}')

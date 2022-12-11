@@ -8,7 +8,7 @@ import tensorflow as tf
 
 from sds.data.index import load_cache_ds_index
 from sds.data.ds_loader import DsLoader
-from sds.model.processing import tf_img_to_float, tf_float_to_img, np_float_to_img, np_img_to_float
+from sds.model.utils import tf_img_to_float, tf_float_to_img, np_img_to_float, np_float_to_img
 from sds.utils.utils import gen_colors
 from sds.utils.ds_utils import load_objs
 from sds.data.image_loader import ImageLoader

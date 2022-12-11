@@ -3,9 +3,8 @@ from typing import Tuple
 import numpy as np
 import tensorflow as tf
 
-from sds.model.processing import tf_img_to_float
+from sds.model.utils import tf_img_to_float
 
-import logging
 logger = tf.get_logger()
 
 
@@ -104,3 +103,37 @@ class TransLoss(tf.keras.losses.Loss):
         diff = tf.reduce_sum(diff * diff, axis=-1)
         diff = tf.reduce_mean(diff)
         return diff
+
+
+class RotSphereLoss(tf.keras.losses.Loss):
+    def __init__(self, graph_pts: tf.Tensor, n_levels: int, diff_threshold: float = 0.2):
+        super().__init__(name=self.__class__.__name__)
+        self.graph_pts = graph_pts
+        self.n_levels = n_levels
+        self.diff_thres = tf.constant(diff_threshold, tf.float32)
+
+    def call(self, y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
+        i, j = tf.cast(y_true[:, 0], tf.int64), tf.cast(y_true[:, 1], tf.int64)
+        rvec, diff = y_true[:, 2:5], y_true[:, 5]
+        ang = tf.norm(rvec, axis=-1, keepdims=True)
+        rv = rvec / ang
+        m_pos = i == j
+        i_pos, rv_pos, ang_pos = i[m_pos][..., None], rv[m_pos], ang[m_pos]
+
+        inds = self._rot_vec_to_inds(rv_pos)
+        inds = tf.concat([i_pos, inds], axis=1)
+        p = tf.gather_nd(y_pred, inds)
+        res = -tf.reduce_mean(tf.math.log(p))
+
+        m_neg = (diff > self.diff_thres) & ~m_pos
+
+        def calc_neg():
+            i_neg, rv_neg = i[m_neg][..., None], rvec[m_neg]
+            inds = self._rot_vec_to_inds(rv_neg)
+            inds = tf.concat([i_neg, inds], axis=1)
+            p = tf.gather_nd(y_pred, inds)
+            return -tf.reduce_mean(tf.math.log(1 - p))
+
+        res += tf.cond(tf.reduce_sum(tf.cast(m_neg, tf.int32)) > 0, calc_neg, lambda: tf.constant(0, tf.float32))
+        return res
+

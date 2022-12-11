@@ -39,7 +39,7 @@ In a new Conda environment with Python 3.9 install packages:
 1. Clone BlenderProc2 and checkout to `main` branch:
     ```sh
     git clone https://github.com/DLR-RM/BlenderProc.git
-    cd BlenderProc
+    cd BlenderProc && git checkout v2.5.0
     pip install -e .
     ```
 

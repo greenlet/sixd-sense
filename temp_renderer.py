@@ -15,7 +15,6 @@ from OpenGL.GL import shaders
 from OpenGL.GLUT import *
 from OpenGL.GLU import *
 
-from sds.utils.ds_utils import load_mesh
 from sds.utils.utils import gen_rot_vec
 
 
@@ -255,8 +254,13 @@ class Renderer:
     def create_mesh_objs(self) -> Dict[str, MeshObj]:
         res = {}
         for glob_id, obj in self.models.items():
-            mesh = obj['mesh']
-            res[glob_id] = MeshObj(mesh['verts'], mesh['normals'], mesh['faces'], self.prog)
+            mesh: pymesh.Mesh = obj['mesh']
+            verts, faces = mesh.vertices, mesh.faces
+            normals_attr_name = 'vertex_normal'
+            if not mesh.has_attribute(normals_attr_name):
+                mesh.add_attribute(normals_attr_name)
+            normals = mesh.get_vertex_attribute(normals_attr_name)
+            res[glob_id] = MeshObj(verts, normals, faces, self.prog)
         return res
 
     def set_window_size(self, win_size: Tuple[int, int]):
@@ -317,12 +321,11 @@ def test_renderer():
     obj_path = data_path / 'sds_data/objs/teamug.stl'
     # obj_path = data_path / 'sds/itodd/models/obj_000004.ply'
     print(f'Loading {obj_path}')
-    _, mesh = load_mesh(obj_path)
-    diff = mesh['verts'].max(axis=0, initial=-np.inf) - mesh['verts'].min(axis=0, initial=-np.inf)
+    mesh = pymesh.load_mesh(obj_path.as_posix())
+    mesh = pymesh.form_mesh(mesh.vertices / 5, mesh.faces)
     models = {
         'teamug': {
             'mesh': mesh,
-            'diameter': np.linalg.norm(diff),
         }
     }
 

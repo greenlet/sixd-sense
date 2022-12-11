@@ -14,7 +14,7 @@ from sds.data.index import load_cache_ds_index
 from sds.data.ds_loader import DsLoader
 from sds.model.losses import MseNZLoss, CosNZLoss
 from sds.model.params import ScaledParams
-from sds.model.processing import tf_float_to_img, tf_img_to_float
+from sds.model.utils import tf_img_to_float, tf_float_to_img
 from sds.utils.tf_utils import tf_set_gpu_incremental_memory_growth
 from sds.utils.utils import datetime_str, gen_colors
 from sds.utils.ds_utils import load_objs

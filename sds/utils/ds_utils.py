@@ -1,9 +1,23 @@
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple
 
+import numpy as np
 import pymesh
 
 from sds.utils.utils import read_yaml
+
+
+def load_mesh(mesh_fpath: Path) -> Tuple[pymesh.Mesh, Dict[str, np.ndarray]]:
+    mesh = pymesh.load_mesh(mesh_fpath.as_posix())
+    verts, faces = mesh.vertices, mesh.faces
+    normals_attr_name = 'vertex_normal'
+    if not mesh.has_attribute(normals_attr_name):
+        mesh.add_attribute(normals_attr_name)
+    normals = mesh.get_vertex_attribute(normals_attr_name)
+    mesh_dict = {
+        'verts': verts, 'faces': faces, 'normals': normals,
+    }
+    return mesh, mesh_dict
 
 
 def load_objs(sds_root_path: Path, target_dataset_name: str, distractor_dataset_name: Optional[str] = None,
@@ -22,7 +36,8 @@ def load_objs(sds_root_path: Path, target_dataset_name: str, distractor_dataset_
                 (load_target_glob_id is None or load_target_glob_id == glob_id)
         ):
             obj_fpath = target_models_path / f'{obj_id}.ply'
-            obj['mesh'] = pymesh.load_mesh(obj_fpath.as_posix())
+            _, mesh_dict = load_mesh(obj_fpath)
+            obj['mesh'] = mesh_dict
         max_glob_num = max(max_glob_num, obj['id_num'])
         res[glob_id] = obj
 

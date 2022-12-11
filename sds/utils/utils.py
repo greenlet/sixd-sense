@@ -6,6 +6,7 @@ from typing import Union, Any, Optional, List, Tuple, Dict
 
 import numpy as np
 from plyfile import PlyData
+from scipy.spatial import KDTree
 from scipy.spatial.transform import Rotation as R
 import yaml
 
@@ -84,11 +85,16 @@ def calc_ref_dist_from_camera(cam_mat: np.ndarray, img_size: Tuple[int, int], ob
 
 
 def gen_rot_vec() -> Tuple[np.ndarray, float]:
-    while True:
-        r = np.random.random((3,))
-        rl = np.linalg.norm(r)
-        if rl > 1e-6:
-            return r / rl, np.random.uniform(0, 2 * np.pi)
+    r = np.random.random(2)
+    ang1 = 2 * np.pi * r[0]
+    cos1, sin1 = np.cos(ang1), np.sin(ang1)
+    cos2 = 1 - 2 * r[1]
+    sin2 = np.sqrt(1 - cos2**2)
+
+    rvec = np.array((cos1 * sin2, sin1 * sin2, cos2))
+    ang = np.random.uniform(0, 2 * np.pi)
+
+    return rvec, ang
 
 
 def make_transform(rot_vec: np.ndarray, rot_alpha: float, pos: np.ndarray) -> np.ndarray:
@@ -98,3 +104,59 @@ def make_transform(rot_vec: np.ndarray, rot_alpha: float, pos: np.ndarray) -> np
     T[:3, 3] = pos
     return T
 
+
+def calc_3d_pts_uniform(num_pts: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    indices = np.arange(0, num_pts, dtype=float) + 0.5
+
+    phi = np.arccos(1 - 2 * indices / num_pts)
+    theta = np.pi * (1 + 5 ** 0.5) * indices
+
+    x, y, z = np.cos(theta) * np.sin(phi), np.sin(theta) * np.sin(phi), np.cos(phi)
+    return x, y, z
+
+
+def graph_from_sphere_pts(pts: np.ndarray) -> List[Tuple[int, int]]:
+    n = len(pts)
+    r = np.sqrt(4 * np.pi / n) * 1.5
+    kdt = KDTree(pts)
+    edges = set()
+    for i, pt in enumerate(pts):
+        inds = kdt.query_ball_point(pt, r)
+        for ind in inds:
+            if ind == i:
+                continue
+            e = (i, ind) if i < ind else (ind, i)
+            edges.add(e)
+    edges = list(edges)
+    return edges
+
+
+def calc_3d_graph_elevated(n_pts: int, n_levels: int) -> Tuple[np.ndarray, int, np.ndarray]:
+    x, y, z = calc_3d_pts_uniform(n_pts)
+    pts = np.stack([x, y, z], axis=1)
+    levels = np.arange(n_levels)
+    edges_pts = graph_from_sphere_pts(pts)
+    n_edges = len(edges_pts)
+    edges_pts = np.array(edges_pts)
+
+    edges_mul = np.tile(edges_pts, (n_levels, 1))
+    levels_mul = np.repeat(levels * n_pts, n_edges)
+    edges = edges_mul + levels_mul[..., None]
+    edges_prev = edges_mul + np.stack([levels_mul, np.roll(levels_mul, -n_edges, axis=0)], axis=1)
+    edges_next = edges_mul + np.stack([levels_mul, np.roll(levels_mul, n_edges, axis=0)], axis=1)
+
+    n_verts = n_pts * n_levels
+    inds_verts = np.arange(n_verts)
+    edges_up = np.stack([inds_verts, np.roll(inds_verts, -n_pts)], axis=1)
+    edges_down = np.stack([inds_verts, np.roll(inds_verts, n_pts)], axis=1)
+
+    edges = np.concatenate([edges, edges_prev, edges_next, edges_up, edges_down])
+
+    return pts, n_verts, edges
+
+
+IntOrTuple = Union[int, Tuple[int, int]]
+
+
+def int_to_tuple(ti: IntOrTuple) -> Tuple[int, int]:
+    return ti if type(ti) == tuple else (ti, ti)

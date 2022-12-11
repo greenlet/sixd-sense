@@ -1,5 +1,4 @@
 import blenderproc as bproc
-from blenderproc.python.material import MaterialLoaderUtility
 
 import argparse
 import itertools
@@ -23,8 +22,9 @@ from blenderproc.python.renderer.SegMapRendererUtility import _colorize_objects_
 from blenderproc.python.types.MeshObjectUtility import MeshObject
 from blenderproc.python.utility.BlenderUtility import get_all_blender_mesh_objects, load_image
 from blenderproc.python.utility.Utility import Utility, UndoAfterExecution
-from blenderproc.python.writer.WriterUtility import WriterUtility
+from blenderproc.python.writer.WriterUtility import _WriterUtility
 from blenderproc.python.renderer import RendererUtility
+from blenderproc.python.material import MaterialLoaderUtility
 
 bproc.init()
 
@@ -58,7 +58,7 @@ def render_segmap(obj_key: str,
         temp_dir = Utility.get_temporary_directory()
 
     with UndoAfterExecution():
-        RendererUtility._render_init()
+        RendererUtility.render_init()
         # the amount of samples must be one and there can not be any noise threshold
         RendererUtility.set_max_amount_of_samples(1)
         RendererUtility.set_noise_threshold(0)
@@ -181,16 +181,16 @@ def write_hdf5(output_dir_path: str, next_file_num: int, output_data_dict: Dict[
                     if stereo_separate_keys and (bpy.context.scene.render.use_multiview or
                                                  used_data_block.shape[0] == 2):
                         # stereo mode was activated
-                        WriterUtility._write_to_hdf_file(file, key + "_0", data_block[adjusted_frame][0])
-                        WriterUtility._write_to_hdf_file(file, key + "_1", data_block[adjusted_frame][1])
+                        _WriterUtility.write_to_hdf_file(file, key + "_0", data_block[adjusted_frame][0])
+                        _WriterUtility.write_to_hdf_file(file, key + "_1", data_block[adjusted_frame][1])
                     else:
-                        WriterUtility._write_to_hdf_file(file, key, data_block[adjusted_frame])
+                        _WriterUtility.write_to_hdf_file(file, key, data_block[adjusted_frame])
                 else:
                     raise Exception(f"There are more frames {adjusted_frame} then there are blocks of information "
                                     f" {len(data_block)} in the given list for key {key}.")
             blender_proc_version = Utility.get_current_version()
             if blender_proc_version is not None:
-                WriterUtility._write_to_hdf_file(file, "blender_proc_version", np.string_(blender_proc_version))
+                _WriterUtility.write_to_hdf_file(file, "blender_proc_version", np.string_(blender_proc_version))
 
 
 class SceneConfig(YamlModel):
@@ -589,13 +589,13 @@ class DsGen:
         return data
 
     def get_frame_gt(self) -> Dict[str, Any]:
-        H_c2w_opencv = Matrix(WriterUtility.get_cam_attribute(
+        H_c2w_opencv = Matrix(_WriterUtility.get_cam_attribute(
             bpy.context.scene.camera, 'cam2world_matrix', local_frame_change=['X', '-Y', '-Z']))
         H_w2c_opencv = H_c2w_opencv.inverted()
         res = {}
         for obj in self.scene_gen.sampled_objs:
             for mesh in obj.active_meshes:
-                H_m2w = Matrix(WriterUtility.get_common_attribute(mesh.blender_obj, 'matrix_world'))
+                H_m2w = Matrix(_WriterUtility.get_common_attribute(mesh.blender_obj, 'matrix_world'))
                 H_m2c = H_w2c_opencv @ H_m2w
                 full_id = mesh.blender_obj['full_id']
                 parts = full_id.split('_')
@@ -671,6 +671,7 @@ def init() -> Config:
     args = parser.parse_args()
     cfg = Config.load(args.config_path)
 
+    print(f'Appending: {cfg.src_path}')
     sys.path.append(cfg.src_path.as_posix())
 
     return cfg

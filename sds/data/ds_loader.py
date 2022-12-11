@@ -13,8 +13,7 @@ from sds.data.index import DsIndex, load_cache_ds_index
 
 # Loads glob_id -> obj dictionary
 from sds.data.utils import read_gt_item, GtItem, glob_inst_to_glob_id
-from sds.utils.common import IntOrTuple, int_to_tuple
-from sds.utils.utils import gen_colors
+from sds.utils.utils import gen_colors, IntOrTuple, int_to_tuple
 from sds.utils.ds_utils import load_objs
 
 DsItem = Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]

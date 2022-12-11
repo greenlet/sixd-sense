@@ -2,7 +2,8 @@ from typing import Any, List
 
 import tensorflow as tf
 
-from sds.model.model import bifpn_init, bifpn_layer, final_upscale, prefixer
+from sds.model.model import bifpn_init, bifpn_layer, final_upscale
+from sds.model.utils import prefixer
 from sds.model.params import ScaledParams
 
 

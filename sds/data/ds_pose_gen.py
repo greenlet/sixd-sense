@@ -15,7 +15,7 @@ import numpy as np
 
 from sds.data.utils import extract_pose, resize_imgs, DsPoseItem
 from sds.synth.renderer import Renderer, OutputType
-from sds.utils.utils import canonical_cam_mat_from_img, gen_rot_vec, make_transform, IntOrTuple, int_to_tuple
+from sds.utils.utils import canonical_cam_mat_from_img, gen_rot_vec, make_transform, IntOrTuple, int_to_tuple, Rot3dIter
 from sds.utils.ds_utils import load_objs
 
 
@@ -66,7 +66,7 @@ def calc_frustum(obj_diam: float, img_size: Tuple[int, int]) -> Tuple[ConeFrustu
 class DsPoseGen:
     def __init__(self, objs: Dict, obj_glob_id: str, img_out_size: int,
                  img_base_size: IntOrTuple = 1024, aug_enabled: bool = False, hist_sz: int = 0,
-                 multi_threading: bool = False, hide_window: bool = False):
+                 multi_threading: bool = False, hide_window: bool = False, rot_iter: Optional[Rot3dIter] = None):
         self.objs = objs
         self.obj_glob_id = obj_glob_id
         self.img_base_size = int_to_tuple(img_base_size)
@@ -82,6 +82,7 @@ class DsPoseGen:
 
         self.multi_threading = multi_threading
         self.hide_window = hide_window
+        self.rot_iter = rot_iter
 
         if self.multi_threading:
             self.renderer_thread = thr.Thread(target=self.thread_func)

@@ -17,7 +17,7 @@ def block_up(x: Any, ch_out: int, ker_sz: int = 4, strides: int = 2, act: Option
     return x
 
 
-def build_aae_layers(img_size: int = 256, inout_channels: int = 6, latent_space_size: int = 128, batch_size: Optional[int] = None) -> Tuple[tf.keras.Input, Any]:
+def build_aae_layers(img_size: int = 256, inout_channels: int = 6, latent_space_size: int = 128, batch_size: Optional[int] = None, train: bool = True) -> Tuple[tf.keras.Input, Any]:
     input_shape = img_size, img_size, inout_channels
     inp = tf.keras.Input(input_shape, batch_size=batch_size, dtype=tf.float32)
 
@@ -31,6 +31,9 @@ def build_aae_layers(img_size: int = 256, inout_channels: int = 6, latent_space_
     x = tf.keras.layers.Flatten()(x)
     x = tf.keras.layers.Dense(latent_space_size)(x)
     z = x
+
+    if not train:
+        return inp, z
 
     hb = hbit(img_size)
     sz = 2 ** (hb - 5)

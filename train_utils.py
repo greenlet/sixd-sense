@@ -120,3 +120,11 @@ def ds_pose_mp_preproc(ds_pose_mp: DsPoseGenMp):
 
     return f
 
+
+def find_last_aae_model_path(train_root_path: Path, obj_id: str, img_sz: int) -> Optional[Path]:
+    prefix = f'oid_{obj_id}--imgsz_{img_sz}--'
+    paths = [p for p in train_root_path.iterdir() if p.name.startswith(prefix)]
+    paths.sort()
+    return paths[-1] if paths else None
+
+

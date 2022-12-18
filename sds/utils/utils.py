@@ -160,3 +160,28 @@ IntOrTuple = Union[int, Tuple[int, int]]
 
 def int_to_tuple(ti: IntOrTuple) -> Tuple[int, int]:
     return ti if type(ti) == tuple else (ti, ti)
+
+
+class Rot3dIter:
+    def __init__(self, rot_vecs_num: int, rot_angs_num: int):
+        self.rot_vecs_num = rot_vecs_num
+        self.rot_angs_num = rot_angs_num
+        xyz = calc_3d_pts_uniform(self.rot_vecs_num)
+        self.rot_vecs = np.stack(xyz, axis=1)
+        # Do not generate angle = 0, so will have to deal with it later
+        ang_step = np.pi / (self.rot_angs_num + 1)
+        self.rot_angs = np.arange(1, self.rot_angs_num + 1, dtype=float) * ang_step
+
+    def __len__(self) -> int:
+        return self.rot_vecs_num * self.rot_angs_num + 1
+
+    def __getitem__(self, i: int) -> Tuple[np.ndarray, float]:
+        if i < 0:
+            raise ValueError(f'Index must be an integer number in range: [0, {len(self)}). Current value: {i}')
+        if i == 0:
+            return np.array((1., 0, 0), float), 0
+
+        i1 = i - 1
+        iv, ia = i1 % self.rot_vecs_num, i1 // self.rot_vecs_num
+        return self.rot_vecs[iv], self.rot_angs[ia]
+

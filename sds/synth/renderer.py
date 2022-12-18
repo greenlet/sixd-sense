@@ -313,7 +313,8 @@ class Renderer:
 
 
 def test_renderer():
-    data_path = Path(os.path.expandvars('$HOME/data'))
+    # data_path = Path(os.path.expandvars('$HOME/data'))
+    data_path = Path(os.path.expandvars('/ws/data'))
     obj_path = data_path / 'sds_data/objs/teamug.stl'
     # obj_path = data_path / 'sds/itodd/models/obj_000004.ply'
     print(f'Loading {obj_path}')

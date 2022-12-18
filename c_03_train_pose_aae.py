@@ -1,18 +1,12 @@
-import math
-import os
-import shutil
 import sys
-from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Tuple, Union, Dict
 
 import numpy as np
-import pymesh
 import tensorflow as tf
-from numpy import ndarray
 from pydantic import BaseModel, Field
 from pydantic_cli import run_and_exit
-from tqdm import tqdm, trange
+import signal
+from tqdm import trange
 
 from sds.data.ds_pose_gen_mp import DsPoseGenMp
 from sds.model.model_pose_aae import build_aae_layers, AaeLoss
@@ -21,18 +15,9 @@ from sds.utils.tf_utils import tf_set_gpu_incremental_memory_growth
 tf_set_gpu_incremental_memory_growth()
 
 from sds.data.ds_pose_gen import DsPoseGen
-from sds.data.ds_pose_loader import DsPoseLoader
-from sds.data.index import load_cache_ds_index
-from sds.data.ds_loader import DsLoader
-from sds.data.utils import DsPoseItem
-from sds.model.losses import MseNZLoss, CosNZLoss, RotVecLoss, TransLoss
-from sds.model.model_pose import build_pose_layers, RotHeadType, ROT_HEAD_TYPE_VALUES
-from sds.model.model_pose_graph import build_hybrid_layers
-from sds.model.params import ScaledParams
-from sds.model.utils import tf_img_to_float, tf_float_to_img, np_img_to_float
-from sds.utils.utils import datetime_str, gen_colors
-from sds.utils.ds_utils import load_objs, load_mesh
-from train_utils import build_maps_model, color_segmentation, normalize, ds_pose_preproc, ds_pose_mp_preproc
+from sds.utils.utils import datetime_str
+from sds.utils.ds_utils import load_mesh
+from train_utils import ds_pose_preproc, ds_pose_mp_preproc
 
 
 class Config(BaseModel):
@@ -108,9 +93,9 @@ class Config(BaseModel):
     )
 
 
-def get_subdir_name(cfg: Config, obj_glob_id: str):
+def get_subdir_name(obj_id: str, img_size: int):
     dt_str = datetime_str()
-    return f'obj_{cfg.obj_id}--imgsz_{cfg.img_size}--{dt_str}'
+    return f'oid_{obj_id}--imgsz_{img_size}--{dt_str}'
 
 
 def tile_images(imgs_true: tf.Tensor, imgs_pred: tf.Tensor, max_cols: int = 2) -> tf.Tensor:
@@ -118,11 +103,14 @@ def tile_images(imgs_true: tf.Tensor, imgs_pred: tf.Tensor, max_cols: int = 2) -
     batch_size, img_sz = imgs_true.shape[0], imgs_true.shape[1]
     if batch_size <= max_cols:
         rows, cols = 1, batch_size
+        n = batch_size
     else:
         rows, cols = batch_size // max_cols + batch_size % max_cols, max_cols
+        rows = min(rows, 20)
+        n = min(batch_size, rows * cols)
     height, width = 2 * rows * img_sz, 2 * cols * img_sz
     img = np.zeros((height, width, 3), np.float32)
-    for ib in range(batch_size):
+    for ib in range(n):
         r, c = 2 * (ib // cols) * img_sz, 2 * (ib % cols) * img_sz
         img[r:r + img_sz, c:c + img_sz] = imgs_true[ib, :, :, :3]
         img[r:r + img_sz, c + img_sz:c + 2 * img_sz] = imgs_pred[ib, :, :, :3]
@@ -185,7 +173,7 @@ def train_aae(cfg: Config) -> int:
     #     print(item)
     #     break
 
-    out_subdir_name = get_subdir_name(cfg, cfg.obj_id)
+    out_subdir_name = get_subdir_name(cfg.obj_id, cfg.img_size)
     out_path = cfg.train_root_path / out_subdir_name
     weights_out_path = out_path / 'weights'
     weights_out_path.mkdir(parents=True, exist_ok=True)
@@ -209,6 +197,13 @@ def train_aae(cfg: Config) -> int:
         grads = tape.gradient(ls, model.trainable_weights)
         optimizer.apply_gradients(zip(grads, model.trainable_weights))
         return ls, y_true, y_pred
+
+    def on_signal(signum, frame):
+        print(f'on_signal signum: {signum}. frame: {frame}')
+        ds_pose_gen.stop()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, on_signal)
 
     ds_train_iter = iter(ds_train)
     pbar = trange(cfg.iterations, desc=f'AAE Train', unit='batch')

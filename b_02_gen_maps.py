@@ -39,6 +39,12 @@ class Config(BaseModel):
         description='Distractor dataset name. Has to be a subdirectory of SDS_ROOT_PATH, one of: "itodd", "tless", etc.',
         cli=('--distractor-dataset-name',),
     )
+    ds_path: Optional[Path] = Field(
+        None,
+        description='Dataset path which contains data subdirectory with list of folders with hdf5 files. '
+                    'If not set, SDS_ROOT_PATH / TARGET_DATASET_NAME path will be used.',
+        cli=('--ds-path',),
+    )
     models_subdir: str = Field(
         'models',
         description='Models subdirectory. Has to contain ply files (default: "models")',
@@ -118,7 +124,10 @@ def read_gt(hdf5_fpath: Path) -> Tuple[np.ndarray, np.ndarray, Tuple[int, int], 
 
 def main(cfg: Config) -> int:
     print(cfg)
-    target_ds_path = cfg.sds_root_path / cfg.target_dataset_name
+    if cfg.ds_path is not None:
+        target_ds_path = cfg.ds_path
+    else:
+        target_ds_path = cfg.sds_root_path / cfg.target_dataset_name
 
     models = load_objs(cfg.sds_root_path, cfg.target_dataset_name, cfg.distractor_dataset_name, cfg.models_subdir, load_meshes=True)
 

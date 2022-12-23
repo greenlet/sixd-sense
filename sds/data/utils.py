@@ -1,11 +1,13 @@
 import dataclasses
 import json
 from pathlib import Path
-from typing import Dict, Tuple, Optional, Any
+from typing import Dict, Tuple, Optional, Any, List
 
 import cv2
 import h5py
 import numpy as np
+
+from sds.utils.utils import IntOrTuple, int_to_tuple
 
 
 def glob_inst_to_glob_id(glob_inst_id: str) -> str:
@@ -80,6 +82,8 @@ def read_gt_item(hdf5_fpath: Path, load_img: bool = True, load_segmap: bool = Tr
 
 
 BBox = Tuple[int, int, int, int]
+Crop = List[Tuple[int, int]]
+Pad = List[Tuple[int, int]]
 
 
 def bbox_from_mask(mask: np.ndarray) -> Optional[BBox]:
@@ -137,23 +141,64 @@ def extract_pose(imgs_with_seg: Tuple[np.ndarray, ...], obj_m2c: np.ndarray, cam
     return bb_c, crop_size, imgs_cropped
 
 
-def resize_imgs(imgs: Tuple[np.ndarray, ...], size_out: int) -> Tuple[np.ndarray, ...]:
-    size_cur = imgs[0].shape[0]
-    if size_cur == size_out:
-        return imgs
+def resize_img(img: np.ndarray, size_out: IntOrTuple, fit_in: bool = True, copy_if_intact: bool = False) -> Tuple[np.ndarray, Optional[Pad], Optional[Crop]]:
+    size_in = img.shape[1], img.shape[0]
+    size_out = int_to_tuple(size_out)
+    pad, crop = None, None
+    if size_in == size_out:
+        if copy_if_intact:
+            img = img.copy()
+        return img, pad, crop
 
-    imgs_out = []
-    for img in imgs:
-        is_mask = img.dtype == bool
+    diff = size_out[0] / size_in[0] - size_out[1] / size_in[1]
+
+    if fit_in and diff < 0 or not fit_in and diff > 0:
+        size_mid = size_out[0], int(size_in[1] * size_out[0] / size_in[0])
+    else:
+        size_mid = int(size_in[0] * size_out[1] / size_in[1]), size_out[1]
+
+    is_mask = img.dtype == bool
+    resized = False
+    if size_mid != size_in:
         inter = cv2.INTER_AREA
-        if size_cur < size_out:
+        if size_mid[0] <= size_in[0]:
             inter = cv2.INTER_NEAREST if is_mask else cv2.INTER_LINEAR
         if is_mask:
-            img = img.astype(np.float64)
-        img_out = cv2.resize(img, (size_out, size_out), interpolation=inter)
-        if is_mask:
-            img_out = img_out.astype(bool)
-        imgs_out.append(img_out)
+            img = img.astype(float)
+
+        img = cv2.resize(img, size_mid, interpolation=inter)
+        resized = True
+
+    size_mid, size_out = np.array(size_mid), np.array(size_out)
+    if fit_in:
+        assert np.all(size_out >= size_mid), f'size_mid = {size_mid} must be <= size_out = {size_out}'
+        delta = size_out - size_mid
+        if np.any(delta):
+            off1 = delta // 2
+            off2 = delta - off1
+            pad = [(off1[1], off2[1]), (off1[0], off2[0])]
+            if img.ndim == 3:
+                pad.append((0, 0))
+            img = np.pad(img, pad)
+    else:
+        assert np.all(size_out <= size_mid), f'size_mid = {size_mid} must be >= size_out = {size_out}'
+        delta = size_mid - size_out
+        if np.any(delta):
+            off = delta // 2
+            crop = [(off[1], off[1] + size_out[1]), (off[0], off[0] + size_out[0])]
+            img = img[crop[0][0]:crop[0][1], crop[1][0]:crop[1][1]]
+
+    if resized and is_mask:
+        img = img.astype(bool)
+
+    return np.ascontiguousarray(img), pad, crop
+
+
+def resize_imgs(imgs: Tuple[np.ndarray, ...], size_out: int, fit_in: bool = True, copy_if_intact: bool = False) -> Tuple[np.ndarray, ...]:
+    imgs_out = []
+    for img in imgs:
+        img, _, _ = resize_img(img, size_out, fit_in, copy_if_intact)
+        imgs_out.append(img)
 
     return tuple(imgs_out)
 

@@ -14,6 +14,8 @@ config_path=$sds_src_path/dsgen_config_itodd.yaml
 
 
 cd $sds_src_path
+export DESIRED_GPU_IDS=1
+#export DESIRED_GPU_IDS=0
 blenderproc $action b_01_gen_ds.py \
   --config-path $config_path
 

@@ -26,7 +26,11 @@ from blenderproc.python.writer.WriterUtility import _WriterUtility
 from blenderproc.python.renderer import RendererUtility
 from blenderproc.python.material import MaterialLoaderUtility
 
-bproc.init()
+print(os.environ)
+desired_gpu_ids = os.environ.get('DESIRED_GPU_IDS')
+if desired_gpu_ids is not None:
+    desired_gpu_ids = [int(gpu_id) for gpu_id in desired_gpu_ids.split(',')]
+bproc.init(desired_gpu_ids=desired_gpu_ids)
 
 
 def render_segmap(obj_key: str,

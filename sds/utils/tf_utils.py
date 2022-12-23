@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 import tensorflow as tf
 
@@ -22,13 +23,25 @@ def tf_set_gpu_incremental_memory_growth():
             print(e)
 
 
-def tf_set_use_device(cpu: bool = True):
-    if cpu:
-        os.environ[CUDA_ENV_NAME] = '-1'
-        # physical_devices = tf.config.list_physical_devices('CPU')
-        # tf.config.set_visible_devices(physical_devices, 'CPU')
-    else:
-        os.environ[CUDA_ENV_NAME] = '0'
+def tf_set_use_device_(device_id: str):
+    os.environ[CUDA_ENV_NAME] = device_id
+    if device_id != '-1':
         tf_set_gpu_incremental_memory_growth()
+
+
+def tf_set_use_device(device_id: str):
+    os.environ[CUDA_ENV_NAME] = device_id
+    if device_id != '-1':
+        devices = []
+        gpus = tf.config.list_physical_devices('GPU')
+        if gpus:
+            for gpu in gpus:
+                if gpu.name.endswith(device_id):
+                    devices.append(gpu)
+                    break
+        devices += tf.config.list_physical_devices('CPU')
+        tf.config.set_visible_devices(devices)
+        tf.config.experimental.set_memory_growth(devices[0], True)
+
 
 

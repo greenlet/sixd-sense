@@ -40,6 +40,12 @@ class Config(BaseModel):
         description='Distractor dataset name. Has to be a subdirectory of SDS_ROOT_PATH, one of: "itodd", "tless", etc.',
         cli=('--distractor-dataset-name',),
     )
+    ds_path: Optional[Path] = Field(
+        None,
+        description='Dataset path which contains data subdirectory with list of folders with hdf5 files. '
+                    'If not set, SDS_ROOT_PATH / TARGET_DATASET_NAME path will be used.',
+        cli=('--ds-path',),
+    )
     models_subdir: str = Field(
         'models',
         description='Models subdirectory. Has to contain ply files (default: "models")',
@@ -148,7 +154,10 @@ def build_ds(ds_loader: DsLoader, batch_size: int) -> tf.data.Dataset:
 
 
 def build_datasets(cfg: Config) -> Tuple[DsLoader, DsLoader, tf.data.Dataset, tf.data.Dataset]:
-    ds_path = cfg.sds_root_path / cfg.target_dataset_name
+    if cfg.ds_path is not None:
+        ds_path = cfg.ds_path
+    else:
+        ds_path = cfg.sds_root_path / cfg.target_dataset_name
     params = ScaledParams(cfg.phi)
     ds_index = load_cache_ds_index(
         ds_path, train_ratio=cfg.train_split_perc / 100,

@@ -1,16 +1,22 @@
 #!/bin/bash
 
 code_path=$HOME/prog
-#data_path=$HOME/data
 #sds_src_path=$code_path/sixd_sense
-data_path=/data/data
+#data_path=$HOME/data
+#data_path=/data/data
+data_path=/ws/data
 sds_src_path=$code_path/sds
 
 export PYTHONPATH=$PYTHONPATH:$sds_src_path
+export CUDA_DIR=/ws/miniconda3/envs/sds/pkgs/cuda-toolkit
+export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/dri/:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+export XLA_FLAGS=--xla_gpu_cuda_data_dir=/ws/miniconda3/envs/sds/pkgs/cuda-toolkit
 
 sds_root_path=$data_path/sds
 target_dataset_name=itodd
 distractor_dataset_name=tless
+ds_path=/media/mburakov/AEF2B64EF2B61B13/data/sds_itodd
 models_subdir='models'
 phi=0
 freeze_bn_arg=''
@@ -34,6 +40,7 @@ python c_01_train_maps.py $bool_args \
   --sds-root-path $sds_root_path \
   --target-dataset-name $target_dataset_name \
   --distractor-dataset-name $distractor_dataset_name \
+  --ds-path $ds_path \
   --models-subdir $models_subdir \
   --phi $phi \
   --train-root-path $train_root_path \

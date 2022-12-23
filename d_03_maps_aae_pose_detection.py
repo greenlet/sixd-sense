@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import cv2
@@ -8,14 +9,14 @@ import tensorflow as tf
 
 from sds.data.index import load_cache_ds_index
 from sds.data.ds_loader import DsLoader
-from sds.data.utils import resize_img
 from sds.model.utils import tf_img_to_float, tf_float_to_img, np_img_to_float, np_float_to_img
 from sds.utils.utils import gen_colors
 from sds.utils.ds_utils import load_objs
 from sds.data.image_loader import ImageLoader
 from sds.model.params import ScaledParams
-from sds.utils.tf_utils import tf_set_use_device
-from train_utils import find_train_weights_path, find_index_file, build_maps_model, color_segmentation, normalize
+from sds.utils.tf_utils import tf_set_use_device, CUDA_ENV_NAME, tf_set_gpu_incremental_memory_growth
+from train_utils import find_train_weights_path, find_index_file, build_maps_model, color_segmentation, normalize, \
+    find_latest_train_path
 
 
 class Config(BaseModel):
@@ -25,40 +26,54 @@ class Config(BaseModel):
     sds_root_path: Path = Field(
         ...,
         description='Path to SDS datasets (containing datasets: ITODD, TLESS, etc.)',
+        required=True,
         cli=('--sds-root-path',),
     )
     target_dataset_name: str = Field(
         ...,
         description='Target dataset name. Has to be a subdirectory of SDS_ROOT_PATH, one of: "itodd", "tless", etc.',
+        required=True,
         cli=('--target-dataset-name',),
     )
     distractor_dataset_name: str = Field(
         ...,
         description='Distractor dataset name. Has to be a subdirectory of SDS_ROOT_PATH, one of: "itodd", "tless", etc.',
+        required=True,
         cli=('--distractor-dataset-name',),
     )
-    phi: int = Field(
+    maps_train_root_path: Path = Field(
         ...,
-        description=f'Model phi number. Must be: 0 <= PHI <= {ScaledParams.phi_max()}',
+        description='Path to a directory containing subdirectories corresponding to different '
+                    'maps model training processes each.',
         required=True,
-        cli=('--phi',),
+        cli=('--maps-train-root-path',),
     )
-    weights_path: Path = Field(
+    aae_train_root_path: Path = Field(
         ...,
-        description='Either path to weights pb-file or path to a directory. In case WEIGHTS_PATH '
-                    'is a directory and contains different training results, path to the latest '
-                    'best weights found will be returned. WEIGHTS_PATH can also be a prefix path of training '
-                    'subdirectory, weights path from this subdirectory will be returned in that case',
+        description='Path to a directory containing subdirectories corresponding to different '
+                    'aae model training processes each.',
         required=True,
-        cli=('--weights-path',)
+        cli=('--aae-train-root-path',),
     )
-    data_source: str = Field(
-        'val',
-        description='Images source which will be used to visualize maps predictions. Can be either '
-                    'path to images directory or have value "val". In latter case validation dataset '
-                    'will be used for predictions and GT will be shown',
+    maps_phi: int = Field(
+        ...,
+        description=f'Maps model phi number. Must be: 0 <= MAPS_PHI <= {ScaledParams.phi_max()}',
+        required=True,
+        cli=('--maps-phi',),
+    )
+    maps_weights: str = Field(
+        'last',
+        description='Either the value "last" which means that latest subdirectory of MAPS_TRAIN_ROOT_PATH '
+                    'or the name of the subdirectory. Best weights from this subdirectory will be loaded.',
         required=False,
-        cli=('--data-source',),
+        cli=('--maps-weights',)
+    )
+    aae_weights: str = Field(
+        'last',
+        description='Either the value "last" which means that latest subdirectory of AAE_TRAIN_ROOT_PATH '
+                    'or the name of the subdirectory. Best weights from this subdirectory will be loaded.',
+        required=False,
+        cli=('--aae-weights',)
     )
     device_id: str = Field(
         'cpu',
@@ -67,6 +82,14 @@ class Config(BaseModel):
                     'This device will be used for both Maps and AAE models inference',
         required=False,
         cli=('--device-id',)
+    )
+    data_source: str = Field(
+        'val',
+        description='Images source which will be used to visualize maps predictions. Can be either '
+                    'path to images directory or have value "val". In latter case validation dataset '
+                    'will be used for predictions and GT will be shown',
+        required=False,
+        cli=('--data-source',),
     )
 
 
@@ -107,83 +130,50 @@ def predict_on_dataset(model: tf.keras.models.Model, ds_loader: DsLoader):
             break
 
 
-def predict_on_images(model: tf.keras.models.Model, model_params: ScaledParams, img_loader: ImageLoader):
-    w = h = model_params.input_size
-    img_vis = np.zeros((2 * h, 2 * w, 3), dtype=np.uint8)
-    colors = gen_colors()
-    cv2.imshow('maps', img_vis)
-    cv2.moveWindow('maps', 0, 0)
-
-    for i in range(len(img_loader)):
-        img = img_loader[i]
-        img, _, _ = resize_img(img, (w, h))
-
-        img_in = tf.convert_to_tensor(img)[None, ...]
-        img_in = tf_img_to_float(img_in)
-        noc_pred, norms_pred, seg_pred = model(img_in)
-        seg_pred = tf.math.argmax(seg_pred, -1)
-        noc_pred, norms_pred, seg_pred = noc_pred[0].numpy(), norms_pred[0].numpy(), seg_pred[0].numpy()
-
-        norms_pred1 = np.linalg.norm(norms_pred, axis=-1)
-        print(f'norms_pred. min: {norms_pred1.min(initial=np.inf)}. '
-              f'max: {norms_pred1.max(initial=np.inf)}. '
-              f'mean: {norms_pred1.mean()}')
-        normalize(norms_pred, inplace=True)
-
-        img_vis[:h, :w] = img
-        img_vis[:h, w:] = color_segmentation(colors, seg_pred)
-        img_vis[h:, :w] = tf_float_to_img(noc_pred)
-        img_vis[h:, w:] = tf_float_to_img(norms_pred)
-
-        img_vis = cv2.cvtColor(img_vis, cv2.COLOR_RGB2BGR)
-        cv2.imshow('maps', img_vis)
-        if cv2.waitKey() in (27, ord('q')):
-            break
+def predict_on_images(model: tf.keras.models.Model, img_loader: ImageLoader):
+    pass
 
 
 def main(cfg: Config) -> int:
     print(cfg)
 
-    train_path, weights_path = find_train_weights_path(cfg.weights_path)
-    if train_path is None or not train_path.exists():
-        print(f'Cannot find weights in {cfg.weights_path}')
-        return 1
+    if cfg.maps_weights == 'last':
+        _, maps_weights_path = find_latest_train_path(cfg.maps_train_root_path)
+    else:
+        _, maps_weights_path = find_latest_train_path(cfg.maps_train_root_path, cfg.maps_weights)
 
     tf_set_use_device(cfg.device_id)
 
-    objs = load_objs(cfg.sds_root_path, cfg.target_dataset_name, cfg.distractor_dataset_name)
+    objs = load_objs(cfg.sds_root_path, cfg.target_dataset_name, cfg.distractor_dataset_name, load_meshes=True)
     n_classes = len(objs)
 
     print('Building model')
-    model = build_maps_model(n_classes, cfg.phi, False)
-    print(f'Loading model from {weights_path}')
-    model.load_weights(weights_path.as_posix())
-    # model.load_weights(weights_path.as_posix(), by_name=True, skip_mismatch=True)
-    model_params = ScaledParams(cfg.phi)
+    maps_model = build_maps_model(n_classes, cfg.maps_phi, False)
+    print(f'Loading model from {maps_weights_path}')
+    maps_model.load_weights(maps_weights_path.as_posix())
+    maps_model_params = ScaledParams(cfg.maps_phi)
 
     ds_loader = None
     img_loader = None
     if cfg.data_source == 'val':
-        index_fpath = find_index_file(train_path)
+        index_fpath = find_index_file(cfg.maps_train_root_path)
         if index_fpath is None:
-            print(f'Cannot find dataset index file in {train_path}')
+            print(f'Cannot find dataset index file in {cfg.maps_train_root_path}')
             return 1
         ds_index = load_cache_ds_index(index_fpath=index_fpath)
-        ds_loader = DsLoader(ds_index, objs, is_training=False, img_size=model_params.input_size)
+        ds_loader = DsLoader(ds_index, objs, is_training=False, img_size=maps_model_params.input_size)
     else:
         images_path = Path(cfg.data_source)
         img_loader = ImageLoader(images_path)
 
-    if ds_loader is not None:
-        predict_on_dataset(model, ds_loader)
-    else:
-        predict_on_images(model, model_params, img_loader)
+    # if ds_loader is not None:
+    #     predict_on_dataset(model, ds_loader)
+    # else:
+    #     predict_on_images(model, img_loader)
 
     return 0
 
 
 if __name__ == '__main__':
-    def exception_handler(ex: BaseException) -> int:
-        raise ex
-    run_and_exit(Config, main, 'Run maps network inference', exception_handler=exception_handler)
+    run_and_exit(Config, main, 'Run maps then AAE networks with refinement afterwards')
 

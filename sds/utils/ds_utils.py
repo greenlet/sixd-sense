@@ -49,7 +49,8 @@ def load_objs(sds_root_path: Path, target_dataset_name: str, distractor_dataset_
             obj['glob_num'] = max_glob_num + obj['id_num']
             if load_meshes:
                 obj_fpath = distractor_models_path / f'{obj_id}.ply'
-                obj['mesh'] = pymesh.load_mesh(obj_fpath.as_posix())
+                _, mesh_dict = load_mesh(obj_fpath)
+                obj['mesh'] = mesh_dict
 
             res[f'{distractor_dataset_name}_{obj_id}'] = obj
 

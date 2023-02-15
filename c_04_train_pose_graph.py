@@ -22,7 +22,7 @@ from sds.data.ds_pose_loader import DsPoseLoader
 from sds.data.index import load_cache_ds_index
 from sds.data.ds_loader import DsLoader
 from sds.data.utils import DsPoseItem
-from sds.model.losses import MseNZLoss, CosNZLoss, RotVecLoss, TransLoss
+from sds.model.losses import MapsMseLoss, MapsCosLoss, RotVecLoss, TransLoss
 from sds.model.model_pose import build_pose_layers, RotHeadType, ROT_HEAD_TYPE_VALUES
 from sds.model.model_pose_graph import build_hybrid_layers
 from sds.model.params import ScaledParams

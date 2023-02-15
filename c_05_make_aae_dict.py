@@ -20,7 +20,7 @@ tf_set_gpu_incremental_memory_growth()
 from sds.data.ds_pose_gen import DsPoseGen
 from sds.utils.utils import datetime_str, calc_3d_pts_uniform, Rot3dIter, canonical_cam_mat_from_img, make_transform
 from sds.utils.ds_utils import load_mesh, load_objs
-from train_utils import ds_pose_preproc, ds_pose_mp_preproc, find_last_aae_model_path
+from train_utils import ds_pose_preproc, ds_pose_mp_preproc, find_last_aae_train_path, make_aae_dict_fname
 
 
 class Config(BaseModel):
@@ -107,7 +107,7 @@ def make_dict(cfg: Config) -> int:
         }
 
     if cfg.weights == 'last':
-        weights_path = find_last_aae_model_path(cfg.train_root_path, cfg.obj_id, cfg.img_size)
+        weights_path = find_last_aae_train_path(cfg.train_root_path, cfg.obj_id, cfg.img_size)
         assert weights_path is not None, f'Cannot find last model weights for object {cfg.obj_id} and image ' \
                                          f'size {cfg.img_size} in {cfg.train_root_path}'
     else:
@@ -161,7 +161,7 @@ def make_dict(cfg: Config) -> int:
     pbar.close()
 
     aae_matches = tf.concat(aae_matches, axis=0).numpy()
-    aae_dict_fname = f'aae_dict_rvecs_{cfg.rot_vecs_num}_rangs_{cfg.rot_angs_num}'
+    aae_dict_fname = make_aae_dict_fname(cfg.rot_vecs_num, cfg.rot_angs_num)
     aae_dict_fpath = weights_path.parent.parent / aae_dict_fname
     print(f'Saving dictionary of shape {aae_matches.shape} and type {aae_matches.dtype} to {aae_dict_fpath}')
     np.save(aae_dict_fpath.as_posix(), aae_matches)

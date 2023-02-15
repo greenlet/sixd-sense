@@ -8,32 +8,37 @@ from sds.model.utils import tf_img_to_float
 logger = tf.get_logger()
 
 
-class MseNZLoss(tf.keras.losses.Loss):
-    def __init__(self):
+class MapsMseLoss(tf.keras.losses.Loss):
+    def __init__(self, nonzero: bool = False):
         super().__init__(name=self.__class__.__name__)
+        self.nonzero = nonzero
 
     def call(self, y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
-        mask = tf.cast(tf.reduce_sum(y_true, axis=-1), tf.bool)
-        y_true, y_pred = y_true[mask], y_pred[mask]
+        if self.nonzero:
+            mask = tf.cast(tf.reduce_max(y_true, axis=-1), tf.bool)
+            y_true, y_pred = y_true[mask], y_pred[mask]
         y_true = tf_img_to_float(y_true)
         diff = (y_true - y_pred) ** 2
         res = tf.reduce_mean(diff)
         return res
 
 
-class CosNZLoss(tf.keras.losses.Loss):
-    def __init__(self):
+class MapsCosLoss(tf.keras.losses.Loss):
+    def __init__(self, nonzero: bool = False):
         super().__init__(name=self.__class__.__name__)
+        self.nonzero = nonzero
 
     def call(self, y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
-        mask = tf.cast(tf.reduce_sum(y_true, axis=-1), tf.bool)
-        y_true, y_pred = y_true[mask], y_pred[mask]
+        if self.nonzero:
+            mask = tf.cast(tf.reduce_max(y_true, axis=-1), tf.bool)
+            y_true, y_pred = y_true[mask], y_pred[mask]
         y_true = tf_img_to_float(y_true)
         y_true, y_pred = tf.reshape(y_true, (-1, 3)), tf.reshape(y_pred, (-1, 3))
         loss_cos = tf.reduce_sum(y_true * y_pred, axis=-1)
         y_pred_norm = tf.norm(y_pred, axis=-1)
-        loss_cos = loss_cos / y_pred_norm + 1
-        loss_norm = 0.05 * (y_pred_norm - 1) ** 2
+        y_true_norm = tf.norm(y_true, axis=-1)
+        loss_cos = (loss_cos - y_pred_norm * y_true_norm) ** 2
+        loss_norm = 0.05 * tf.reduce_sum(tf.math.square(y_pred - y_true), axis=-1)
         res = tf.reduce_mean(loss_cos + loss_norm)
         return res
 

@@ -15,9 +15,8 @@ from sds.utils.tf_utils import tf_set_gpu_incremental_memory_growth
 tf_set_gpu_incremental_memory_growth()
 
 from sds.data.ds_pose_gen import DsPoseGen
-from sds.utils.utils import datetime_str
 from sds.utils.ds_utils import load_mesh
-from train_utils import ds_pose_preproc, ds_pose_mp_preproc
+from train_utils import ds_pose_preproc, ds_pose_mp_preproc, make_aae_train_subdir_name
 
 
 class Config(BaseModel):
@@ -91,11 +90,6 @@ class Config(BaseModel):
         required=False,
         cli=('--pose-gen-workers',),
     )
-
-
-def get_subdir_name(obj_id: str, img_size: int):
-    dt_str = datetime_str()
-    return f'oid_{obj_id}--imgsz_{img_size}--{dt_str}'
 
 
 def tile_images(imgs_true: tf.Tensor, imgs_pred: tf.Tensor, max_cols: int = 2) -> tf.Tensor:
@@ -173,7 +167,7 @@ def train_aae(cfg: Config) -> int:
     #     print(item)
     #     break
 
-    out_subdir_name = get_subdir_name(cfg.obj_id, cfg.img_size)
+    out_subdir_name = make_aae_train_subdir_name(cfg.obj_id, cfg.img_size)
     out_path = cfg.train_root_path / out_subdir_name
     weights_out_path = out_path / 'weights'
     weights_out_path.mkdir(parents=True, exist_ok=True)

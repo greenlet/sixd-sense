@@ -21,16 +21,18 @@ models_subdir='models'
 phi=0
 freeze_bn_arg=''
 train_root_path=$data_path/sds_train_maps
-weights_to_use='none'
+weights='none'
+#weights='last'
 new_learning_subdir_arg=''
 train_split_perc=90
 learning_rate=1e-3
-epochs=200
-batch_size=3
-train_steps=2000
-val_steps=200
+epochs=300
+batch_size=8
+train_steps=1000
+val_steps=100
 debug_arg=""
 bool_args="$freeze_bn_arg $new_learning_subdir_arg $debug_arg"
+device_id="1"
 
 #epochs=3
 #train_steps=5
@@ -44,11 +46,12 @@ python c_01_train_maps.py $bool_args \
   --models-subdir $models_subdir \
   --phi $phi \
   --train-root-path $train_root_path \
-  --weights-to-use $weights_to_use \
+  --weights $weights \
   --learning-rate $learning_rate \
   --epochs $epochs \
   --train-split-perc $train_split_perc \
   --batch-size $batch_size \
   --train-steps $train_steps \
-  --val-steps $val_steps
+  --val-steps $val_steps \
+  --device-id $device_id
 

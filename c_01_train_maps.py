@@ -1,6 +1,6 @@
 import math
-import os
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Tuple, Union
@@ -12,13 +12,14 @@ from pydantic_cli import run_and_exit
 
 from sds.data.index import load_cache_ds_index
 from sds.data.ds_loader import DsLoader
-from sds.model.losses import MseNZLoss, CosNZLoss
+from sds.model.losses import MapsMseLoss, MapsCosLoss, SparseCategoricalCrossEntropyNZLoss
 from sds.model.params import ScaledParams
 from sds.model.utils import tf_img_to_float, tf_float_to_img
-from sds.utils.tf_utils import tf_set_gpu_incremental_memory_growth
-from sds.utils.utils import datetime_str, gen_colors
+from sds.utils.tf_utils import tf_set_use_device
+from sds.utils.utils import gen_colors
 from sds.utils.ds_utils import load_objs
-from train_utils import build_maps_model, color_segmentation, normalize
+from train_utils import build_maps_model, color_segmentation, normalize, make_maps_train_subdir_name, \
+    find_last_maps_train_path
 
 
 class Config(BaseModel):
@@ -70,12 +71,13 @@ class Config(BaseModel):
         required=True,
         cli=('--train-root-path',)
     )
-    weights_to_use: Optional[str] = Field(
+    weights: Optional[str] = Field(
         'none',
-        description='Can be either full path to model weights, or "last" word meaning that last weights from '
-                    'WEIGHTS_ROOT_PATH will be used, or WEIGHTS_ROOT_PATH subdirectory prefix (if multiple directories '
-                    'match prefix last one will be chosen. If not set or set to "none", no weights will be loaded',
-        cli=('--weights-to-use',),
+        description='Either full path to the model weights, or "last" word meaning that last weights from '
+                    'WEIGHTS_ROOT_PATH will be used, or else WEIGHTS_ROOT_PATH subdirectory. '
+                    'If WEIGHTS not set or set to "none", no weights will be loaded and new training subdirectory '
+                    'in WEIGHTS_ROOT_PATH will be created.',
+        cli=('--weights',),
     )
     new_learning_subdir: bool = Field(
         False,
@@ -117,6 +119,13 @@ class Config(BaseModel):
         required=True,
         description='Number of validation steps per epoch',
         cli=('--val-steps',)
+    )
+    device_id: str = Field(
+        '-1',
+        description='Device id. Can have one of the values: "-1", "0", "1", ..., "n". '
+                    'If set to "-1", CPU will be used, "GPU" with DEVICE_ID number will be used otherwise.',
+        required=False,
+        cli=('--device-id',)
     )
     debug: bool = Field(
         False,
@@ -175,10 +184,6 @@ def build_datasets(cfg: Config) -> Tuple[DsLoader, DsLoader, tf.data.Dataset, tf
     ds_train = build_ds(ds_loader_train, cfg.batch_size)
     ds_val = build_ds(ds_loader_val, cfg.batch_size)
     return ds_loader_train, ds_loader_val, ds_train, ds_val
-
-
-def get_subdir_name(dt: datetime, ds_name: str, n_train: int, n_val: int):
-    return f'{datetime_str(dt)}_{ds_name}_t{n_train}_v{n_val}'
 
 
 class PredictionVisualizer(tf.keras.callbacks.Callback):
@@ -298,46 +303,82 @@ class PredictionVisualizer(tf.keras.callbacks.Callback):
 def main(cfg: Config) -> int:
     print(cfg)
 
+    tf_set_use_device(cfg.device_id)
+
     dsl_train, dsl_val, ds_train, ds_val = build_datasets(cfg)
-
-    out_subdir_name = get_subdir_name(
-        datetime.now(), cfg.target_dataset_name, len(dsl_train), len(dsl_val))
-    out_path = cfg.train_root_path / out_subdir_name
-    weights_out_path = out_path / 'weights'
-    weights_out_path.mkdir(parents=True, exist_ok=True)
-    params_out_path = out_path / 'params'
-    params_out_path.mkdir(parents=True, exist_ok=True)
     index_fpath = dsl_train.ds_index.cache_file_path
-    shutil.copyfile(index_fpath, params_out_path / index_fpath.name)
-
     n_classes = len(dsl_train.objs)
-    tf_set_gpu_incremental_memory_growth()
 
+    if cfg.weights == 'none':
+        out_subdir_name = make_maps_train_subdir_name(cfg.target_dataset_name, cfg.phi)
+        train_path = cfg.train_root_path / out_subdir_name
+    elif cfg.weights == 'last':
+        train_path = find_last_maps_train_path(cfg.train_root_path, cfg.target_dataset_name, cfg.phi)
+        if train_path is None:
+            print(f'Cannot find train_path for dataset = {cfg.target_dataset_name} and phi = cfg.phi in '
+                  f'{cfg.train_root_path} directory')
+            sys.exit(1)
+    else:
+        train_path = cfg.train_root_path / cfg.weights
+        if not train_path.exists():
+            train_path = Path(cfg.weights)
+            if not train_path.exists():
+                print(f'"{cfg.weights}" is neither subdirectory of {cfg.train_root_path} nor the path '
+                      f'to a train directory')
+                sys.exit(1)
+
+    weights_path = train_path / 'weights'
+    weights_last_fpath = weights_path / 'last' / 'last.pb'
+    weights_best_fpath = weights_path / 'best' / 'best.pb'
+    params_path = train_path / 'params'
     model = build_maps_model(n_classes, cfg.phi, cfg.freeze_bn)
+    if cfg.weights == 'none':
+        params_path.mkdir(parents=True, exist_ok=True)
+        weights_path.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(index_fpath, params_path / index_fpath.name)
+    else:
+        model.load_weights(weights_last_fpath.as_posix())
+
+    # losses = [
+    #     ## -- NOC --
+    #     MapsMseLoss(nonzero=True),
+    #     ## -- Normals --
+    #     MapsCosLoss(nonzero=True),
+    #     ## -- Segmentation --
+    #     tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True, ignore_class=0),
+    # ]
+    losses = [
+        ## -- NOC --
+        MapsMseLoss(nonzero=True),
+        ## -- Normals --
+        MapsMseLoss(nonzero=True),
+        ## -- Segmentation --
+        SparseCategoricalCrossEntropyNZLoss(),
+    ]
+    # losses = [
+    #     ## -- NOC --
+    #     MapsMseLoss(nonzero=False),
+    #     ## -- Normals --
+    #     MapsMseLoss(nonzero=False),
+    #     ## -- Segmentation --
+    #     tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True, ignore_class=0),
+    # ]
+
     model.compile(
         optimizer=tf.keras.optimizers.RMSprop(learning_rate=1e-3),
-        loss=[
-            ## -- NOC --
-            MseNZLoss(),
-            ## -- Normals --
-            # CosNZLoss(),
-            MseNZLoss(),
-            ## -- Segmentation --
-            tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-            # SparseCategoricalCrossEntropyNZLoss(),
-        ],
+        loss=losses,
     )
     callbacks = [
         tf.keras.callbacks.ModelCheckpoint(
-            (weights_out_path / 'last' / 'last.pb').as_posix(),
+            weights_last_fpath.as_posix(),
             save_best_only=False, save_weights_only=True,
         ),
         tf.keras.callbacks.ModelCheckpoint(
-            (weights_out_path / 'best' / 'best.pb').as_posix(),
+            weights_best_fpath.as_posix(),
             save_best_only=True, save_weights_only=True,
         ),
         tf.keras.callbacks.TensorBoard(
-            out_path.as_posix(),
+            train_path.as_posix(),
             histogram_freq=0,
             batch_size=cfg.batch_size,
             write_graph=False,
@@ -348,9 +389,9 @@ def main(cfg: Config) -> int:
             embeddings_metadata=None
         ),
         tf.keras.callbacks.ReduceLROnPlateau(
-            factor=0.5, patience=8, min_lr=1e-8,
+            factor=0.5, patience=6, min_lr=1e-9,
         ),
-        PredictionVisualizer(out_path, dsl_train, dsl_val),
+        PredictionVisualizer(train_path, dsl_train, dsl_val),
     ]
     model.fit(
         ds_train,
@@ -359,6 +400,7 @@ def main(cfg: Config) -> int:
         validation_data=ds_val,
         validation_steps=cfg.val_steps,
         callbacks=callbacks,
+        # initial_epoch=60,
     )
 
     return 0

@@ -1,5 +1,8 @@
 import os
+import re
+import sys
 from pathlib import Path
+from typing import List, Dict, Any, Optional
 
 import cv2
 import numpy as np
@@ -16,7 +19,7 @@ from sds.data.image_loader import ImageLoader
 from sds.model.params import ScaledParams
 from sds.utils.tf_utils import tf_set_use_device, CUDA_ENV_NAME, tf_set_gpu_incremental_memory_growth
 from train_utils import find_train_weights_path, find_index_file, build_maps_model, color_segmentation, normalize, \
-    find_latest_train_path
+    find_last_maps_train_path, find_last_aae_train_path
 
 
 class Config(BaseModel):
@@ -75,8 +78,26 @@ class Config(BaseModel):
         required=False,
         cli=('--aae-weights',)
     )
+    aae_img_size: int = Field(
+        256,
+        description='AAE Encoder input and Decoder output image size.',
+        required=False,
+        cli=('--aae-img-size',),
+    )
+    aae_rot_vecs_num: int = Field(
+        ...,
+        description='Number of unit length rotation vectors for AAE pose map. Vectors will be distributed on sphere uniformly.',
+        required=True,
+        cli=('--aae-rot-vecs-num',),
+    )
+    aae_rot_angs_num: int = Field(
+        ...,
+        description='Number of inplane rotation angles for AAE pose map. Angles will be distributed evenly in interval (0, 180).',
+        required=True,
+        cli=('--aae-rot-angs-num',),
+    )
     device_id: str = Field(
-        'cpu',
+        '-1',
         description='Device id. Can have one of the values: "-1", "0", "1", ..., "n". '
                     'If set to "-1", CPU will be used, "GPU" with DEVICE_ID number will be used otherwise. '
                     'This device will be used for both Maps and AAE models inference',
@@ -91,6 +112,34 @@ class Config(BaseModel):
         required=False,
         cli=('--data-source',),
     )
+    obj_ids: List[str] = Field(
+        [],
+        description='Object ids to run. If empty, objects with AAE weights/maps will be used only. '
+                    'When set to "all", weights for all dataset objects will be searched. In case of '
+                    'OBJECT_IDS contains nonempty set or value "all", AAE weights for all corresponding object '
+                    'are required.'
+    )
+
+
+def find_aae_weights_dicts(train_root_path: Path, glob_ids: List[str], img_sz: int, rvecs_num: int, rangs_num: int) -> Dict[str, Dict[str, Optional[Path]]]:
+    res = {}
+    for glob_id in glob_ids:
+        obj_id = glob_id.split('_', 1)[1]
+        weights_path = find_last_aae_train_path(train_root_path, obj_id, img_sz)
+        dict_path = None
+        if weights_path:
+            dict_path = weights_path / f'aae_dict_rvecs_{rvecs_num}_rangs_{rangs_num}.npy'
+            if not dict_path.exists():
+                dict_path = None
+        res[glob_id] = {'weights': weights_path, 'dict': dict_path}
+    return res
+
+
+class AaePoseMatcher:
+    def __init__(self, weights_path: Path, dict_path: Path, ):
+        self.weights_path = weights_path
+        self.dict_path = dict_path
+        m =
 
 
 def predict_on_dataset(model: tf.keras.models.Model, ds_loader: DsLoader):
@@ -138,20 +187,47 @@ def main(cfg: Config) -> int:
     print(cfg)
 
     if cfg.maps_weights == 'last':
-        _, maps_weights_path = find_latest_train_path(cfg.maps_train_root_path)
+        _, maps_weights_path = find_last_maps_train_path(cfg.maps_train_root_path)
     else:
-        _, maps_weights_path = find_latest_train_path(cfg.maps_train_root_path, cfg.maps_weights)
+        _, maps_weights_path = find_last_maps_train_path(cfg.maps_train_root_path, cfg.maps_weights)
 
     tf_set_use_device(cfg.device_id)
 
-    objs = load_objs(cfg.sds_root_path, cfg.target_dataset_name, cfg.distractor_dataset_name, load_meshes=True)
+    objs = load_objs(cfg.sds_root_path, cfg.target_dataset_name, load_meshes=True)
     n_classes = len(objs)
+    aae_required = len(cfg.obj_ids) > 0
+    if cfg.obj_ids and not 'all' in cfg.obj_ids:
+        objs_new = {}
+        for oid in cfg.obj_ids:
+            gid = f'{cfg.target_dataset_name}_{oid}'
+            objs_new[gid] = objs[gid]
+        objs = objs_new
 
     print('Building model')
     maps_model = build_maps_model(n_classes, cfg.maps_phi, False)
     print(f'Loading model from {maps_weights_path}')
     maps_model.load_weights(maps_weights_path.as_posix())
     maps_model_params = ScaledParams(cfg.maps_phi)
+
+    glob_ids = list(objs.keys())
+    aae_paths = find_aae_weights_dicts(cfg.aae_train_root_path, glob_ids, cfg.aae_img_size, cfg.aae_rot_vecs_num, cfg.aae_rot_angs_num)
+    found_glob_ids = []
+    not_found = []
+    for glob_id, paths in aae_paths.items():
+        weights_path, dict_path = paths['weights'], paths['dict']
+        if weights_path and dict_path:
+            found_glob_ids.append(glob_id)
+        elif not weights_path:
+            not_found.append(f'AAE weights not found for object {glob_id} and image size {cfg.aae_img_size}')
+        else:
+            not_found.append(f'AAE dict file not found in {weights_path} for rot_vecs = {cfg.aae_rot_vecs_num} '
+                             f'and rot_angs = {cfg.aae_rot_angs_num}')
+    if not_found:
+        tab = ' ' * 4
+        not_found = [f'{tab}{s}' for s in not_found]
+        print('\n'.join(not_found))
+        if aae_required:
+            sys.exit(1)
 
     ds_loader = None
     img_loader = None

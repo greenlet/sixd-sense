@@ -22,7 +22,7 @@ from sds.data.ds_pose_loader import DsPoseLoader
 from sds.data.index import load_cache_ds_index
 from sds.data.ds_loader import DsLoader
 from sds.data.utils import DsPoseItem
-from sds.model.losses import MseNZLoss, CosNZLoss, RotVecLoss, TransLoss
+from sds.model.losses import MapsMseLoss, MapsCosLoss, RotVecLoss, TransLoss
 from sds.model.model_pose import build_pose_layers, RotHeadType, ROT_HEAD_TYPE_VALUES
 from sds.model.params import ScaledParams
 from sds.model.utils import tf_img_to_float, tf_float_to_img, np_img_to_float

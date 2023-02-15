@@ -20,8 +20,8 @@ phi=0
 weights_subdir=20221222_152244_itodd_t90990_v10110
 #deviceid="-1"
 device_id="1"
-#data_source="val"
-data_source="/media/mburakov/AEF2B64EF2B61B13/data/itodd_test_all/test/000001/gray/"
+data_source="val"
+#data_source="/media/mburakov/AEF2B64EF2B61B13/data/itodd_test_all/test/000001/gray/"
 
 python d_01_maps_inference.py \
   --sds-root-path $sds_root_path \

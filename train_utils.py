@@ -12,37 +12,27 @@ from sds.data.ds_pose_loader import DsPoseLoader
 from sds.data.utils import ds_pose_item_to_numbers
 from sds.model.model import bifpn_init, bifpn_layer, final_upscale
 from sds.model.params import ScaledParams
+from sds.utils.utils import datetime_str
 
-TRAIN_SUBDIR_PAT = re.compile(r'^(\d{8}_\d{6})_.+$')
-
-
-def find_latest_train_path(train_root_path: Path, prefix: str = '') -> Optional[Path]:
-    max_path = None
-    max_dt = None
-    for subdir in train_root_path.iterdir():
-        m = TRAIN_SUBDIR_PAT.match(subdir.name)
-        if not m or not subdir.name.startswith(prefix):
-            continue
-        dt = datetime.strptime(m.group(1), '%Y%m%d_%H%M%S')
-        if max_dt is None or max_dt < dt:
-            max_dt = dt
-            max_path = subdir
-    return max_path
+MAPS_TRAIN_SUBDIR_PAT = re.compile(r'^(\s+)--phi_(\d)--(\d{8}_\d{6})$')
+AAE_TRAIN_SUBDIR_PAT = re.compile(r'oid_(.+)--imgsz_(\d+)--\d{8}_\d{6}$')
+AAE_DICT_FNAME_PAT = re.compile(r'^aae_dict_rvecs_(\d+)_rangs_(\d+)\.npy$')
 
 
-def find_train_weights_path(weights_path: Path, best: bool = True) -> Tuple[Optional[Path], Optional[Path]]:
-    if weights_path.is_file():
-        # <train-subdir>/weights/best/<checkpoint-files>
-        return weights_path.parent.parent.parent, weights_path
-    train_path = None
-    if weights_path.is_dir():
-        train_path = find_latest_train_path(weights_path)
-    if train_path is None and weights_path.parent.is_dir():
-        train_path = find_latest_train_path(weights_path.parent, weights_path.name)
-    if train_path is not None:
-        last_part = 'best/best.pb' if best else 'last/last.pb'
-        return train_path, train_path / 'weights' / last_part
-    return None, None
+def make_maps_train_subdir_prefix(ds_name: str, phi: int):
+    return f'{ds_name}--phi_{phi}--'
+
+
+def make_maps_train_subdir_name(ds_name: str, phi: int):
+    prefix = make_maps_train_subdir_prefix(ds_name, phi)
+    dt_str = datetime_str()
+    return f'{prefix}{dt_str}'
+
+
+def find_last_maps_train_path(train_root_path: Path, ds_name: str, phi: int) -> Optional[Path]:
+    prefix = make_maps_train_subdir_prefix(ds_name, phi)
+    paths = [p for p in train_root_path.iterdir() if p.name.startswith(prefix)]
+    return max(paths) if paths else None
 
 
 def find_index_file(train_path: Path) -> Optional[Path]:
@@ -121,10 +111,33 @@ def ds_pose_mp_preproc(ds_pose_mp: DsPoseGenMp):
     return f
 
 
-def find_last_aae_model_path(train_root_path: Path, obj_id: str, img_sz: int) -> Optional[Path]:
-    prefix = f'oid_{obj_id}--imgsz_{img_sz}--'
+def make_aae_train_subdir_prefix(obj_id: str, img_size: int):
+    return f'oid_{obj_id}--imgsz_{img_size}--'
+
+
+def make_aae_train_subdir_name(obj_id: str, img_size: int):
+    prefix = make_aae_train_subdir_prefix(obj_id, img_size)
+    dt_str = datetime_str()
+    return f'{prefix}{dt_str}'
+
+
+def find_last_aae_train_path(train_root_path: Path, obj_id: str, img_size: int) -> Optional[Path]:
+    prefix = make_aae_train_subdir_prefix(obj_id, img_size)
     paths = [p for p in train_root_path.iterdir() if p.name.startswith(prefix)]
-    paths.sort()
-    return paths[-1] if paths else None
+    return max(paths) if paths else None
+
+
+def make_aae_dict_fname(rot_vecs_num: int, rot_angs_num: int) -> str:
+    return f'aae_dict_rvecs_{rot_vecs_num}_rangs_{rot_angs_num}'
+
+
+def parse_aae_train_subdir_name(name: str) -> Tuple[str, int]:
+    m = AAE_TRAIN_SUBDIR_PAT.match(name)
+    return m.group(1), int(m.group(2))
+
+
+def parse_aae_dict_fname(name: str) -> [int, int]:
+    m = AAE_DICT_FNAME_PAT.match(name)
+    return int(m.group(1)), int(m.group(2))
 
 
